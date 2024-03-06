@@ -2,6 +2,7 @@ import correlations
 import pandas as pd
 import numpy as np
 from scipy.optimize import newton
+from scipy.optimize import minimize
 
 
 class SCNProperty(object):
@@ -109,6 +110,9 @@ class SCNProperty(object):
 
         Raises:
         - ValueError: If the provided target is not a valid target variable.
+
+        Example:
+            solved_scn = SCNProperty.solveForSCN(target='Xa', value=0.086459)
         """
 
         target = target.lower()
@@ -138,74 +142,25 @@ class SCNProperty(object):
         solved_scn = newton(target_difference, initial_guess_scn)
         return solved_scn
 
-print(SCNProperty.build_table(np.arange(6, 15, 1)).to_string())
+scns = []
+for mw in np.arange(80, 200, 5):
+    solved_scn = SCNProperty.solveForSCN(target='mw', value=mw)
+    scns.append(solved_scn)
+
+print(SCNProperty.build_table(scns).to_string())
 print('-------------------------------------------------------')
 
-# this method works, assuming that there's no BTEX composition
 
-import numpy as np
-import pandas as pd
-from scipy.optimize import minimize
+temp = SCNProperty(7.071429)
 
-# Molecular weights of the compounds
-mws = np.array([86.18, 100.21, 114.23])  # n-Hexane, n-Heptane, n-Octane
-mws = np.array([86.18, 100.21, 114.23, 92.14])  # n-Hexane, n-Heptane, n-Octane, Toluene (aromatics)
-mws = np.array([86.18, 100.21, 114.23, 128, 92.14])  # n-Hexane, n-Heptane, n-Octane, n-Nonane, aromatics (aromatics)
+print(temp.v100)
+print(temp.v210)
+print(temp.VGF)
+print(temp.RI)
+print(temp.RI_intercept)
 
-# Specific gravities of the compounds (dummy values, replace with actual values)
-sgs = np.array([0.659, 0.684, 0.70])  # n-Hexane, n-Heptane, n-Octane
-sgs = np.array([0.659, 0.684, 0.70, 0.866])  # n-Hexane, n-Heptane, n-Octane, Toluene (BTEX avg)
-sgs = np.array([0.659, 0.684, 0.70, 0.718, 0.866])  # n-Hexane, n-Heptane, n-Octane, n-Nonane, aromatics (BTEX avg)
+vgf = -1.816 + 3.484 * temp.sg_liq - 0.1156 * np.log(temp.v100)
+vgf = -1.948 + 3.535 * temp.sg_liq - 0.1613 * np.log(temp.v210)
+print(vgf)
 
-
-def calculate_liquid_sg(x):
-    # Simplified liquid SG calculation based on mole fractions and specific gravities
-    # Replace this with your actual SG calculation
-    return np.dot(x, sgs) / np.sum(x)
-
-
-def optimize_mixture(target_mw):
-    # Objective function to minimize: the difference between target and calculated MW
-    def objective(x):
-        return np.abs(target_mw - np.dot(x, mws) / np.sum(x))
-
-    solved_scn = SCNProperty.solveForSCN(target='mw', value=target_mw)
-
-    mole_frac_aromatics = 1 - SCNProperty(scn=solved_scn).xa
-    # Constraints: sum of mole fractions should be 1
-    cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - mole_frac_aromatics})
-
-    # Initial guess (normalized ratios)
-    # initial_ratios = np.array([2, 1, 0.5])
-    # initial_ratios = np.array([2, 1, 0.5, 0.5])
-    initial_ratios = np.array([2, 1, 0.5, 0.25, 0.5])
-    x0 = initial_ratios / np.sum(initial_ratios)
-
-    # Bounds for each variable: between 0 and 1
-    bounds = [(0, 1) for _ in range(len(mws))]
-
-    # Minimize the objective function
-    result = minimize(objective, x0, bounds=bounds, constraints=cons)
-
-    # Calculate liquid SG based on the optimized mole fractions
-    liquid_sg = calculate_liquid_sg(result.x)
-
-    # Return the optimized mole fractions and liquid SG
-    return result.x, liquid_sg
-
-
-# Prepare dataframe
-data = []
-for target_mw in np.arange(85, 121, 1):
-    mole_fractions, liquid_sg = optimize_mixture(target_mw)
-
-    mole_fractions = np.round(mole_fractions * 100, 2)
-
-    data.append([target_mw, liquid_sg] + list(mole_fractions))
-
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8']]
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8', 'Aromatics']]
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8', 'C9', 'Aromatics']]
-df = pd.DataFrame(data, columns=columns)
-
-print(df.to_string())
+print('-------------------------------------------------------')

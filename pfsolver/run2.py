@@ -2,6 +2,7 @@ import correlations
 import pandas as pd
 import numpy as np
 from scipy.optimize import newton
+from scipy.optimize import minimize
 
 
 class SCNProperty(object):
@@ -109,6 +110,9 @@ class SCNProperty(object):
 
         Raises:
         - ValueError: If the provided target is not a valid target variable.
+
+        Example:
+            solved_scn = SCNProperty.solveForSCN(target='Xa', value=0.086459)
         """
 
         target = target.lower()
@@ -138,24 +142,8 @@ class SCNProperty(object):
         solved_scn = newton(target_difference, initial_guess_scn)
         return solved_scn
 
-print(SCNProperty.build_table(np.arange(6, 15, 1)).to_string())
-print('-------------------------------------------------------')
 
-# this method works, assuming that there's no BTEX composition
-
-import numpy as np
-import pandas as pd
-from scipy.optimize import minimize
-
-# Molecular weights of the compounds
-mws = np.array([86.18, 100.21, 114.23])  # n-Hexane, n-Heptane, n-Octane
-mws = np.array([86.18, 100.21, 114.23, 92.14])  # n-Hexane, n-Heptane, n-Octane, Toluene (aromatics)
-mws = np.array([86.18, 100.21, 114.23, 128, 92.14])  # n-Hexane, n-Heptane, n-Octane, n-Nonane, aromatics (aromatics)
-
-# Specific gravities of the compounds (dummy values, replace with actual values)
-sgs = np.array([0.659, 0.684, 0.70])  # n-Hexane, n-Heptane, n-Octane
-sgs = np.array([0.659, 0.684, 0.70, 0.866])  # n-Hexane, n-Heptane, n-Octane, Toluene (BTEX avg)
-sgs = np.array([0.659, 0.684, 0.70, 0.718, 0.866])  # n-Hexane, n-Heptane, n-Octane, n-Nonane, aromatics (BTEX avg)
+#
 
 
 def calculate_liquid_sg(x):
@@ -164,48 +152,100 @@ def calculate_liquid_sg(x):
     return np.dot(x, sgs) / np.sum(x)
 
 
-def optimize_mixture(target_mw):
+def optimize_mixture(target_mw, mws):
+
     # Objective function to minimize: the difference between target and calculated MW
-    def objective(x):
-        return np.abs(target_mw - np.dot(x, mws) / np.sum(x))
+    def objective(x, xa, target_mw, mws_p, mw_a):
+        return np.abs(target_mw - np.dot(x, mws_p) - xa*mw_a)
 
     solved_scn = SCNProperty.solveForSCN(target='mw', value=target_mw)
+    xa = SCNProperty(scn=solved_scn).xa
 
-    mole_frac_aromatics = 1 - SCNProperty(scn=solved_scn).xa
-    # Constraints: sum of mole fractions should be 1
-    cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - mole_frac_aromatics})
-
-    # Initial guess (normalized ratios)
-    # initial_ratios = np.array([2, 1, 0.5])
-    # initial_ratios = np.array([2, 1, 0.5, 0.5])
-    initial_ratios = np.array([2, 1, 0.5, 0.25, 0.5])
+    n = len(mws) - 1
+    initial_ratios = 2 * 0.5 ** np.arange(n)
     x0 = initial_ratios / np.sum(initial_ratios)
 
     # Bounds for each variable: between 0 and 1
-    bounds = [(0, 1) for _ in range(len(mws))]
+    bounds = [(0, 1) for _ in range(len(mws[:-1]))]
+    cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - (1-xa)})
 
     # Minimize the objective function
-    result = minimize(objective, x0, bounds=bounds, constraints=cons)
-
-    # Calculate liquid SG based on the optimized mole fractions
-    liquid_sg = calculate_liquid_sg(result.x)
+    result = minimize(objective, x0, args=(xa, target_mw, mws[:-1], mws[-1]), constraints=cons, bounds=bounds)
 
     # Return the optimized mole fractions and liquid SG
-    return result.x, liquid_sg
+    return list(result.x) + [xa]
 
 
-# Prepare dataframe
+print(SCNProperty.build_table(np.arange(6, 15, 1)).to_string())
+print('-------------------------------------------------------')
+
+scns = []
+for mw in np.arange(80, 200, 5):
+    solved_scn = SCNProperty.solveForSCN(target='mw', value=mw)
+    scns.append(solved_scn)
+
+print(SCNProperty.build_table(scns).to_string())
+print('-------------------------------------------------------')
+
+
+x_C6 = 0.422
+x_C7 = 0.361
+x_C8 = 0.076
+x_C9 = 0.023
+x_C10 = 0.007
+
+print(x_C6 / 0.889)
+print(x_C7 / 0.889)
+print(x_C8 / 0.889)
+print(x_C9 / 0.889)
+print(x_C10 / 0.889)
+
+
+# Molecular weights and specific gravities of the compounds
+# n-Hexane, n-Heptane, n-Octane, n-Nonane, aromatics (BTEX avg)
+mws = np.array([86.18, 100.21, 114.23, 128.2, 78])
+sgs = np.array([0.659, 0.684, 0.70, 0.718, 0.8786])
+
+# Benzene MW = 78.11, sg = 0.8786
+# Toluene MW = 92.14, sg = 0.866
+# 65% Benzene and 35% Toluene mixture MW = 83
+
+# the liquid gravity is under-predicted because naphthenes have higher sg at low MW.
+
+# Todo:
+# For naphthene fraction, assume a pseudo-naphthenic-compound composed of 60% C6H12, 30% C7H14, 10% C8H16 to get common sg and MW.
+# For aromatic fraction, assume a pseudo-aromatic-compound composed of 60% Benzene and 40% Toluene to get common sg and MW.
+# Write an article for SCN and PNA composition. I need a summary of this section to move on to naphthene and aromatic fraction for sg_liq calculation
+
+# For C6, cyclohexane             , according to Fesco GLYCALC format
+# For C7, methylcyclohexane       , according to Fesco GLYCALC format
+# For C8, Trimethylcyclopentane   , pick a random one. There's no definite ones, there are so many of them. But this shouldn't matter as they compose negligible fraction of the mixture.
+
+# split my article into two: 1) SG Liq correlation from MW
+
+# The Brazos liquid condensate sample analysis assume 60% 30% 10% fraction. The SG and MW match exactly.
+
+
+def calc_sg_mixture(mole_fractions, sgs):
+    masses = mole_fractions * sgs
+    volumes = masses / sgs
+    total_mass = np.sum(masses)
+    total_volume = np.sum(volumes)
+    mixture_sg = total_mass / total_volume
+    return mixture_sg
+
+# Example usage
 data = []
-for target_mw in np.arange(85, 121, 1):
-    mole_fractions, liquid_sg = optimize_mixture(target_mw)
+for target_mw in np.arange(86, 102, 1):
+    mole_fractions = optimize_mixture(target_mw, mws)
+    sg_liq = calc_sg_mixture(mole_fractions, sgs)
+    data.append([target_mw] + [sg_liq] + list(mole_fractions))
 
-    mole_fractions = np.round(mole_fractions * 100, 2)
-
-    data.append([target_mw, liquid_sg] + list(mole_fractions))
-
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8']]
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8', 'Aromatics']]
-columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['C6', 'C7', 'C8', 'C9', 'Aromatics']]
+#columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['Hexane', 'Heptane', 'Octane', 'Nonane', 'Aromatics']]
+columns = ['MW', 'Liquid SG'] + [f'{compound} [%]' for compound in ['Hexane', 'Heptane', 'Octane', 'Nonane', 'Aromatics']]
 df = pd.DataFrame(data, columns=columns)
+#df['Total'] = df.apply(lambda x: x.iloc[1] + x.iloc[2] + x.iloc[3] + x.iloc[4] + x.iloc[5], axis=1)
+df['Total'] = df.apply(lambda x: x.iloc[2] + x.iloc[3] + x.iloc[4] + x.iloc[5] + x.iloc[6], axis=1)
+print(np.dot(mws, mole_fractions))
+print(df.to_string(index=False))
 
-print(df.to_string())

@@ -1,6 +1,59 @@
 import numpy as np
 import config
 
+import pint
+UREG = pint.UnitRegistry()
+
+
+def mw_ghv_paraffinic(mw, ghv):
+    """
+    source: my article - update this later
+    unit: ghv in Btu/scf
+    notes: linear correlation for paraffinic plus fractions
+    """
+    return -mw + 0.0188 * ghv - 2.758
+
+
+def mw_ghv_aromatic(mw, ghv):
+    """
+    source: my article - update this later
+    unit: ghv in Btu/scf
+    notes: linear correlation for aromatic plus fractions
+    """
+    return -mw + 0.0186 * ghv + 10.326
+
+
+def mw_ghv(mw, ghv, aromatic_fraction):
+    """
+    source: my article - update this later
+    unit: ghv in Btu/scf
+    notes: linear correlation for plus fractions
+    """
+    coef = 0.0188 * (1 - aromatic_fraction) + 0.0186 * aromatic_fraction
+    intercept = -2.758 * (1 - aromatic_fraction) + 10.326 * aromatic_fraction
+    return -mw + coef * ghv + intercept
+
+
+def ideal_gas_molar_volume():
+    """
+    PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
+    R = 8.31446261815324 ((m^3-Pa)/(mol-K))
+    T = 288.7056 K, 60F, standard temperature
+    P = 101325 Pa, 1 atm, standard pressure
+    :return: ideal gas molar volume in a standard condition (m^3/mol)
+    """
+    return config.constants['R'] * config.constants['T_STANDARD'] / config.constants['P_STANDARD']
+
+
+def ghv_liq_ghv_gas_mw(ghv_liq, ghv_gas, mw):
+    """
+    source: None, this is a simple unit conversion
+    unit: ghv_liq in Btu/lbm ghv_gas in Btu/scf, mw in lbm/lbmol
+    """
+    V_molar = ideal_gas_molar_volume()  # fixed 0.0236 m^3/mol (379.48 ft^3/mol) at standard conditions for all compounds
+    V_molar = UREG('%.15f m^3/g' % V_molar).to('ft^3/lb').magnitude  # unit conversion
+    return -ghv_liq + ghv_gas * V_molar / mw
+
 
 def ghv_liq_sg_liq(ghv_liq, sg_liq):
     """
@@ -178,6 +231,8 @@ def calc_MW_from_GHV(GHV, aromatic_fraction=0):
 
     MW = coef_paraffin * GHV * (1 - aromatic_fraction) + intercept_paraffin * (1 - aromatic_fraction) + coef_aromatic * GHV * aromatic_fraction + intercept_aromatic * aromatic_fraction
     return MW
+
+
 
 
 """

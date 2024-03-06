@@ -5,25 +5,13 @@ from thermo import ChemicalConstantsPackage
 import correlations
 import warnings
 from scipy.optimize import newton
+import config
 
-
-CONSTANTS = {
-    "T_STANDARD": 288.7056,  # Temperature in Kelvin
-    "P_STANDARD": 101325.0,    # Pressure in Pascal
-    "R": 8.31446261815324,
-    "MW_AIR": 28.97,  # molecular weight of air at standard conditions, g/mol
-    "RHO_WATER": 999.0170125317171,  # density of water @60F, 1atm (kg/m^3) according to IAPWS-95 standard. Calculate rho at different conditions by:  chemicals.iapws95_rho(288.706, 101325) (K, pascal)
-}
-# simpler string to match the GPA table column names.
-MAPPING = {
-    'ghv': 'Gross Heating Value Ideal Gas [Btu/ft^3]',
-    'sg_liq_60F': 'Liq. Relative Density @60F:1atm',
-    'sg_gas_60F': 'Ideal Gas Relative Density @60F:1atm',
-    'mw': 'Molar Mass [g/mol]',
-}
 
 UREG = pint.UnitRegistry()
 
+MAPPING = config.GPA_table_column_mapping
+CONSTANTS = config.constants
 
 def normalize_composition(comp_dict):
     """
@@ -155,6 +143,52 @@ class SCNProperty(object):
         })
         return table
 
+    @staticmethod
+    def solveForSCN(target, value):
+        """
+        Solve for SCN that results in the specified target variable reaching a specified value.
+
+        Parameters:
+        - target: A string specifying the target variable (e.g., 'MW').
+        - value: The desired value for the target variable (e.g., 94 for MW=94).
+
+        Returns:
+        - scn: The SCN value that results in the target variable reaching the desired value.
+
+        Raises:
+        - ValueError: If the provided target is not a valid target variable.
+
+        Example:
+            solved_scn = SCNProperty.solveForSCN(target='Xa', value=0.086459)
+        """
+
+        target = target.lower()
+        valid_targets = ['scn', 'sg_liq', 'mw', 'tb', 'xp', 'xn', 'xa', 'RI', 'v100', 'v210']
+        if target not in valid_targets:
+            raise ValueError(f"Invalid target '{target}'. Valid targets are {valid_targets}.")
+
+        mapping = {
+            'scn': 'scn',
+            'sg_liq': 'sg_liq',
+            'mw': 'MW',
+            'tb': 'Tb',
+            'xp': 'xp',
+            'xn': 'xn',
+            'xa': 'xa',
+            'ri': 'RI',
+            'v100': 'v100',
+            'v210': 'v210'
+        }
+
+        def target_difference(scn):
+            temp_obj = SCNProperty(scn)
+            current_value = getattr(temp_obj, mapping[target])
+            return current_value - value
+
+        initial_guess_scn = 7
+        solved_scn = newton(target_difference, initial_guess_scn)
+        return solved_scn
+
 
 class PropertyTable(object):
 
@@ -180,10 +214,8 @@ class PropertyTable(object):
 
         self.V_molar = ideal_gas_molar_volume()
 
-        self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure = self.get_properties_pure_compounds()
-        self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction = [], [], [], [], []
-
-        # self.ws_pure = self.zs_pure * self.mws_pure
+        self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure = self.get_properties_pure_compounds()
+        self.ghvs_gas_fraction, self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction = [], [], [], [], [], []
 
         # table without summary statistics line
         self.table_ = pd.DataFrame.from_dict({
@@ -192,7 +224,7 @@ class PropertyTable(object):
             'Mole Fraction': self.zs_pure + self.zs_fraction,
             'MW': self.mws_pure.tolist() + [None] * self.n_fraction,
             'Mass Fraction': [None] * len(self.names),
-            'GHV_gas': self.ghvs_liq_pure.tolist() + [None] * self.n_fraction,
+            'GHV_gas': self.ghvs_gas_pure.tolist() + [None] * self.n_fraction,
             'GHV_liq': self.ghvs_liq_pure.tolist() + [None] * self.n_fraction,
             'SG_gas': self.sgs_gas_pure.tolist() + [None] * self.n_fraction,
             'SG_liq': self.sgs_liq_pure.tolist() + [None] * self.n_fraction,
@@ -207,7 +239,8 @@ class PropertyTable(object):
             "GHV_gas": 'mole_frac_mean',
             "GHV_liq": 'mole_frac_mean',
             "SG_gas": 'mass_frac_mean',
-            "SG_liq": 'mass_frac_mean'
+            "SG_liq": 'mass_frac_mean',
+            #"SG_liq": 'mole_frac_mean',
         }
         self.table_summary = self.calc_summary()
 
@@ -270,7 +303,6 @@ class PropertyTable(object):
 
         self._internal_update_property()
 
-
     def update_total_row(self):
         if "Total" not in self.table_summary['Name'].values:
             self.table_summary.loc[self.table_summary.index.max() + 1] = ["Total"] + [np.nan] * (
@@ -290,51 +322,73 @@ class PropertyTable(object):
         self.table_summary = self.calc_summary()  # Update Total row first
         rules = {
             'Mass Fraction': {
-                'weighted_avg': {
-                    'required_columns': ['Mass Fraction'],
-                    'total_required': True,
-                    'required_others': None,
+                'weighted_avg': {  # notes: weighted average method needs to be removed.
+                    'required_columns': [['Mass Fraction']],
+                    'total_required': [['Mass Fraction']],
+                    'required_others': [[None]],
+                    'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': ['Mole Fraction', 'MW'],
-                    'total_required': True,
-                    'required_others': None,
+                    'required_columns': [['Mole Fraction', 'MW']],
+                    'total_required': [['MW']],
+                    'required_others': [[None]],
+                    'funcs': [PropertyTable._calc_mass_frac_from_mole_frac_mw],
                 },
             },
             'GHV_gas': {
                 'weighted_avg': {
-                    'required_columns': ['Mole Fraction'],
-                    'total_required': True,
-                    'required_others': None,
+                    'required_columns': [['Mole Fraction']],
+                    'total_required': [[None]],
+                    'required_others': [[None]],
+                    'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': ['MW'],
-                    'total_required': False,
-                    'required_others': ['SCN'], # maybe self.SCNs
+                    'required_columns': [['MW']],
+                    'total_required': [[None]],
+                    'required_others': [['SCN']],  # maybe self.SCNs
+                    'funcs': [None],
+                },
+            },
+            'GHV_liq': {
+                'weighted_avg': {
+                    'required_columns': [['Mass Fraction']],
+                    'total_required': [[None]],
+                    'required_others': [[None]],
+                    'funcs': [None],
+                },
+                'correlation': {
+                    'required_columns': [['GHV_gas', 'MW'], ['MW']],
+                    'total_required': [[None], [None]],
+                    'required_others': [[None], ['SCN']],  # maybe self.SCNs
+                    'funcs': [PropertyTable._calc_GHV_liq_from_GHV_gas_MW, None],
                 },
             },
             'SG_gas': {
                 'weighted_avg': {
-                    'required_columns': ['Mass Fraction'],
-                    'total_required': True,
-                    'required_others': None,
+                    'required_columns': [['Mass Fraction']],
+                    'total_required': [True],
+                    'required_others': [[None]],
+                    'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': ['MW'],
-                    'total_required': True,
-                    'required_others': ['SCN'],
+                    'required_columns': [['MW']],
+                    'total_required': [[None]],
+                    'required_others': [['SCN']],
+                    'funcs': [None],
                 },
             },
             'SG_liq': {
                 'weighted_avg': {
-                    'required_columns': ['Mass Fraction'],
-                    'total_required': True,
-                    'required_others': None,
+                    'required_columns': [['Mass Fraction']],
+                    'total_required': [True],
+                    'required_others': [[None]],
+                    'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': ['GHV_gas', 'MW'],
-                    'total_required': True,
-                    'required_others': None,
+                    'required_columns': [['MW'], ['GHV_gas', 'MW']],
+                    'total_required': [[None], [None]],
+                    'required_others': [[None], [None]],
+                    'funcs': [PropertyTable._calc_SG_liq_from_MW, PropertyTable._calc_SG_liq_from_GHV_gas_MW]
                 },
             }
         }
@@ -342,87 +396,84 @@ class PropertyTable(object):
         for property, methods in rules.items():
             for method_name, method_details in methods.items():
                 # Check if the 'weighted_avg' method can be computed or not, skip to 'correlation' if not
+
+                #if self._handle_weighted_avg_method(property, methods.get('weighted_avg', {})):
+                #    continue  # Skip to next property if weighted_avg was successful
+
                 if method_name == 'correlation':
                     self._handle_correlation_method(property, method_details)
 
         self.table_summary = self.calc_summary()
 
         warnings.simplefilter(action='ignore', category=FutureWarning)
-        #print(pd.concat([self.table_, self.table_summary]).to_string())
-
         self.table = pd.concat([self.table_, self.table_summary])
         #print(self.table_.to_string())
         #print('---------------------------------------------------------')
         #print(self.table_summary.to_string())
 
     def _handle_correlation_method(self, property, method_details):
-
-        required_columns = method_details['required_columns']
-        total_required = method_details['total_required']
-
-        # Iterate over each row in the dataframe
         for idx, row in self.table_.iterrows():
-            # Check if required columns for the current row have valid (non-NaN) values
-            if all(pd.notna(row[col]) for col in required_columns):
-                # Check if total is required and valid for calculation
-                if total_required and all(pd.notna(self.table_summary[col].values[0]) for col in required_columns):
-                    # Perform the correlation calculation here
-                    # This is a placeholder for your specific calculation logic
+            if pd.isna(row[property]):  # Skip rows where property is already calculated
+                n_correlations = len(method_details['required_columns'])
+                for i in range(n_correlations):
 
-                    if pd.isna(row[property]):  # perform calculation if the cell is empty, otherwise, dont
-                        calculated_value = self._calculate_correlation(row, property)
-                        self.table_.loc[idx, property] = calculated_value
+                    required_columns_satisfied = True
+                    total_required_satisfied = True
+                    required_others_satisfied = True
 
-    def _calculate_correlation(self, row, property):
+                    if all(method_details['required_columns'][i]):
+                        required_columns_satisfied = all(pd.notna(row[col]) for col in method_details['required_columns'][i])
+                    if all(method_details['total_required'][i]):
+                        total_required_satisfied = all(pd.notna(self.table_summary[col].iloc[0]) for col in method_details['total_required'][i])
+                    if all(method_details['required_others'][i]):
+                        required_others_satisfied = True  # implement actual function later
 
-        if property == 'Mass Fraction':
-            MW_total = self.table_summary.at[self.table_summary.index.max(), 'MW']
-            calculated_value = row['Mole Fraction'] * row['MW'] / MW_total
-        elif property == 'SG_gas':
-            calculated_value = newton(lambda sg: correlations.mw_sg_gas(row['MW'], sg), x0=0.65, maxiter=50)
-        elif property == 'SG_liq':
+                    if all([required_columns_satisfied, total_required_satisfied, required_others_satisfied]):
 
-            # ghv needs to be in liquid ghv
-            calculated_value = newton(lambda sg_liq: correlations.ghv_liq_sg_liq(row['GHV_gas'], sg_liq), x0=0.65, maxiter=50)
-        else:
-            calculated_value = None
+                        args = []
+                        if all(method_details['required_columns'][i]):
+                            args = [row[col] for col in method_details['required_columns'][i]]  # this returns KeyError: None for list containing None, so all() method is used to avoid this error.
 
-        return calculated_value
+                        args_total = []
+                        if all(method_details['total_required'][i]):
+                            args_total = [self.table_summary[col].iloc[0] for col in method_details['total_required'][i]]
 
+                        args_others = []
+                        if all(method_details['required_others'][i]):
+                            args_others = []
 
-    def solve_ghv_gas(self, ghv_total, update=True, name=None):
+                        func = method_details['funcs'][i]
+                        if func == None:
+                            print('property %s is not computed cuz no function' % property)
+                            continue
 
-        if len(self.names_fraction) > 1:
-            if name is None:
-                raise ValueError("More than 1 fractions are identified: %s. Please specify the name parameter. For example: name='%s'" % (self.names_fraction, self.names_fraction[0]))
-            else:
-                name = self.names_fraction[0]
+                        calculated_value = func(*args, *args_others, *args_total)
 
-        z_fraction = self.table_[self.table_['Name'] == name]['Mole Fraction'].iloc[0]
-        z_fraction_index = self.table_[self.table_['Name'] == name].index[0]
+                        if calculated_value is not None:
+                            self.table_.loc[idx, property] = calculated_value
+                            break  # Stop after the first successful calculation
 
-        wghtd_ghv_pure = np.sum(self.ghvs_pure * self.zs_pure)
-        wghtd_ghv_fraction = ghv_total - wghtd_ghv_pure
-        ghv_fraction = wghtd_ghv_fraction / z_fraction
+    @staticmethod
+    def _calc_SG_liq_from_MW(mw):
+        scn = SCNProperty.solveForSCN(target='MW', value=mw)
+        return SCNProperty(scn=scn).sg_liq
 
-        if update is True:
-            #self.table_['GHV_gas'] = np.append(self.ghvs_pure, ghv_fraction)
-            self.ghvs_fraction.append(ghv_fraction)
-            # call self._internal_update_property() to update the table for consistent update method.
+    @staticmethod
+    def _calc_mass_frac_from_mole_frac_mw(mole_frac, mw, mw_total):
+        return mole_frac * mw / mw_total
 
+    @staticmethod
+    def _calc_SG_liq_from_GHV_liq(ghv_liq):
+        return newton(lambda sg_liq: correlations.ghv_liq_sg_liq(ghv_liq, sg_liq), x0=0.65, maxiter=50)
 
+    @staticmethod
+    def _calc_SG_liq_from_GHV_gas_MW(ghv_gas, mw):
+        ghv_liq = PropertyTable._calc_GHV_liq_from_GHV_gas_MW(ghv_gas, mw)
+        return PropertyTable._calc_SG_liq_from_GHV_liq(ghv_liq)
 
-        return ghv_fraction
-        #return wghtd_ghv_fraction / sum(self.zs_fraction)
-
-    def calc_mw(self, SCN=7, name=None):
-
-
-
-
-        MW = correlations.calc_MW_from_GHV(1, aromatic_fraction=0)
-
-        pass # calculate with scn value
+    @staticmethod
+    def _calc_GHV_liq_from_GHV_gas_MW(ghv_gas, mw):
+        return newton(lambda ghv_liq: correlations.ghv_liq_ghv_gas_mw(ghv_liq, ghv_gas, mw), x0=0.65, maxiter=50)
 
     def get_properties_pure_compounds(self):
         """
@@ -431,6 +482,7 @@ class PropertyTable(object):
         :return:
         """
         ghvs_ideal_gas = []
+        ghvs_liq = []
         sgs_liq = []
         sgs_gas = []
         mws = []
@@ -441,42 +493,49 @@ class PropertyTable(object):
 
             # chemical is found in the GPA data table
             if not matching_row.empty:
-                ghv_ideal_gas = matching_row[MAPPING['ghv']].iloc[0]
+                ghv_ideal_gas = matching_row[MAPPING['ghv_gas']].iloc[0]
+                ghv_liq = matching_row[MAPPING['ghv_liq']].iloc[0]
                 sg_liq = matching_row[MAPPING['sg_liq_60F']].iloc[0]
                 sg_gas = matching_row[MAPPING['sg_gas_60F']].iloc[0]
                 mw = matching_row[MAPPING['mw']].iloc[0]
 
                 if pd.isna(ghv_ideal_gas):
-
                     if Hc != 0:  # GPA table is missing GHV_gas data for some compounds: 1-propyne
                         ghv_ideal_gas = Hc / self.V_molar
                         ghv_ideal_gas = UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
+                        ghv_liq = Hc * mw
+                        ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
                     elif Hc is None:
                         raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (
                         name, 'Hcs, heat of combustion [J/mol]'))
                     else:
                         ghv_ideal_gas = 0
+                        ghv_liq = 0
 
             # chemical is NOT identified in the GPA datatable
             else:
                 if Hc != 0:
                     ghv_ideal_gas = Hc / self.V_molar
                     ghv_ideal_gas = UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
+                    ghv_liq = Hc * mw
+                    ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
                 elif Hc is None:
                     raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (
                     name, 'Hcs, heat of combustion [J/mol]'))
                 else:
                     ghv_ideal_gas = 0
+                    ghv_liq = 0
 
                 sg_liq = rhol_60F_mass / CONSTANTS['RHO_WATER']
                 sg_gas = mw / CONSTANTS['MW_AIR']
 
             ghvs_ideal_gas.append(ghv_ideal_gas)
+            ghvs_liq.append(ghv_liq)
             sgs_liq.append(sg_liq)
             sgs_gas.append(sg_gas)
             mws.append(mw)
 
-        return np.array(ghvs_ideal_gas), np.array(sgs_liq), np.array(sgs_gas), np.array(mws)
+        return np.array(ghvs_ideal_gas), np.array(ghvs_liq), np.array(sgs_liq), np.array(sgs_gas), np.array(mws)
 
     def _split_known_unknown(self):
         comp_dict_pure = {}
@@ -526,7 +585,22 @@ brazos = dict([
     #('Heptanes+', 0.4),
 ])
 
-ptable = PropertyTable(brazos, summary=False)
+brazos_cond = dict([
+    ('nitrogen', 0),
+    ('carbon dioxide', 0.007),
+    ('methane', 0.052),
+    ('ethane', 0.495),
+    ('propane', 3.985),
+    ('isobutane', 1.935),
+    ('n-butane', 11.854),
+    ('i-pentane', 8.710),
+    ('n-pentane', 12.783),
+    ('Hexanes+', 60.179),
+    #('Heptanes+', 0.4),
+])
+
+ptable = PropertyTable(brazos_cond, summary=False)
+#ptable = PropertyTable(brazos, summary=False)
 
 # print the dataframe table nicely
 
@@ -538,11 +612,18 @@ ptable = PropertyTable(brazos, summary=False)
 print(ptable.table.to_string())
 
 print('----------------------------------------------------------')
-ptable.update_property('Hexanes+', {'MW':90.161, })
 
+#ptable.update_property('Hexanes+', {'MW':90.161, 'GHV_gas': 5000})
+#ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})
+#ptable.update_property('Heptanes+', {'MW': 100.5, 'GHV_gas': 6000})
+df = SCNProperty.build_table([i for i in range(6, 15)])
+print(df.to_string())
 
+ptable.update_property('Hexanes+', {'MW': 93.189, 'GHV_gas': 5129.2})  # Brazos condensates
+#ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
 print(ptable.table.to_string())
 
+# Todo: replace Riazi correlation for sg_liq of crude oil to SCN solve method.
 # print(ptable.solve_ghv_gas(ghv_total=1320, name='Hexanes+'))
 
 # print(ptable.table.to_string())
@@ -551,7 +632,6 @@ print(ptable.table.to_string())
 scn_obj = SCNProperty(scn=7)
 #print(scn_obj.xa)
 
-df = SCNProperty.build_table([i for i in range(6, 15)])
 
 # Todo: implement a weighted average linear regression prediction
 
