@@ -72,6 +72,20 @@ def mw_ghv(mw, ghv, aromatic_fraction):
     return -mw + coef * ghv + intercept
 
 
+def mw_GHV_gas_xa(mw, GHV_gas, xa):
+
+    # xa = aromatic fraction
+    # two different linear regression coefficients.
+    # Naphthenes are not considered because they are nearly identical to paraffins for MW vs. GHV correlation
+    coef_paraffin = 0.0188
+    intercept_paraffin = -2.758
+    coef_aromatic = 0.0186
+    intercept_aromatic = 10.326
+
+    return -mw + coef_paraffin * GHV_gas * (1 - xa) + intercept_paraffin * (1 - xa) + coef_aromatic * GHV_gas * xa + intercept_aromatic * xa
+
+
+
 def ideal_gas_molar_volume():
     """
     PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
@@ -232,19 +246,6 @@ def calc_PNA_comp(MW, VG, RI_intercept):
     xa = g + h * RI_intercept + i * VG
 
     return xp, xn, xa
-
-
-def calc_MW_from_GHV(GHV, aromatic_fraction=0):
-
-    # two different linear regression coefficients.
-    # Naphthenes are not considered because they are nearly identical to paraffins for MW vs. GHV correlation
-    coef_paraffin = 0.0188
-    intercept_paraffin = -2.758
-    coef_aromatic = 0.0186
-    intercept_aromatic = 10.326
-
-    MW = coef_paraffin * GHV * (1 - aromatic_fraction) + intercept_paraffin * (1 - aromatic_fraction) + coef_aromatic * GHV * aromatic_fraction + intercept_aromatic * aromatic_fraction
-    return MW
 
 
 
