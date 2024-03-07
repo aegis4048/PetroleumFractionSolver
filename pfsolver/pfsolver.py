@@ -54,7 +54,7 @@ def ideal_gas_molar_volume():
 
 class SCNProperty(object):
 
-    def __init__(self, sg=None, mw=None, Tb=None, xa=None, xn=None, xp=None, PNA=True, subtract='naphthenes'):
+    def __init__(self, sg=None, mw=None, Tb=None, xa=None, xn=None, xp=None, PNA=True, subtract='naphthenes', warnings=True):
 
         # Tb in rankine
         self.sg = None
@@ -93,6 +93,20 @@ class SCNProperty(object):
         self._attributes = {key: float(f"{value:.{n}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
         self._round_attributes(n)
 
+        self._range_warnings = {
+            'sg': (0.69, 0.947),
+            'mw': (82, 698),
+            'Tb': (606.6, 1531.8)
+        }
+        if warnings:
+            self._check_ranges()
+
+    def _check_ranges(self):
+        for attr, (min_val, max_val) in self._range_warnings.items():
+            value = getattr(self, attr, None)
+            if value is not None and not (min_val <= value <= max_val):
+                warnings.warn(f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warnings=False to suppress this warning.")
+
     @classmethod
     def build_table(cls, arr, col='mw', PNA=True):
         col = SCNProperty._target_str_mapping(col)
@@ -102,8 +116,7 @@ class SCNProperty(object):
             SCN_dict = {key: value for key, value in vars(SCN_obj).items() if not key.startswith('_')}
             SCN_dicts.append(SCN_dict)
 
-        table = pd.DataFrame(SCN_dicts)
-        return table
+        return pd.DataFrame(SCN_dicts)
 
     @staticmethod
     def _target_str_mapping(target_str):
@@ -396,10 +409,10 @@ class PropertyTable(object):
                     'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': [['MW'], ['GHV_gas', 'MW']],
+                    'required_columns': [['MW']],
                     'total_required': [[None], [None]],
                     'required_others': [[None], [None]],
-                    'funcs': [PropertyTable._calc_SG_liq_from_MW, PropertyTable._calc_SG_liq_from_GHV_gas_MW]
+                    'funcs': [PropertyTable._calc_SG_liq_from_MW]
                 },
             }
         }
@@ -581,6 +594,10 @@ class PropertyTable(object):
                     raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (name, 'Hcs, heat of combustion [J/mol]'))
 
 
+df = SCNProperty.build_table([i for i in range(82, 94, 2)])
+print(df.to_string())
+
+
 brazos = dict([
     ('hydrogen sulfide', 0.001),
     ('nitrogen', 2.304),
@@ -627,8 +644,6 @@ print('----------------------------------------------------------')
 #ptable.update_property('Hexanes+', {'MW':90.161, 'GHV_gas': 5000})
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})
 #ptable.update_property('Heptanes+', {'MW': 100.5, 'GHV_gas': 6000})
-df = SCNProperty.build_table([i for i in range(6, 15)])
-print(df.to_string())
 
 ptable.update_property('Hexanes+', {'MW': 93.189, 'GHV_gas': 5129.2})  # Brazos condensates
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
@@ -640,8 +655,6 @@ print(ptable.table.to_string())
 # print(ptable.table.to_string())
 #print(ptable.ghvs_fraction)
 
-scn_obj = SCNProperty(scn=7)
-#print(scn_obj.xa)
 
 
 # Todo: implement a weighted average linear regression prediction

@@ -2,11 +2,13 @@ import correlations
 import pandas as pd
 import numpy as np
 from scipy.optimize import newton
+import warnings
+
 
 
 class SCNProperty(object):
 
-    def __init__(self, sg=None, mw=None, Tb=None, xa=None, xn=None, xp=None, PNA=True, subtract='naphthenes'):
+    def __init__(self, sg=None, mw=None, Tb=None, xa=None, xn=None, xp=None, PNA=True, subtract='naphthenes', warnings=True):
 
         # Tb in rankine
         self.sg = None
@@ -45,6 +47,20 @@ class SCNProperty(object):
         self._attributes = {key: float(f"{value:.{n}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
         self._round_attributes(n)
 
+        self._range_warnings = {
+            'sg': (0.69, 0.947),
+            'mw': (82, 698),
+            'Tb': (606.6, 1531.8)
+        }
+        if warnings:
+            self._check_ranges()
+
+    def _check_ranges(self):
+        for attr, (min_val, max_val) in self._range_warnings.items():
+            value = getattr(self, attr, None)
+            if value is not None and not (min_val <= value <= max_val):
+                warnings.warn(f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warnings=False to suppress this warning.")
+
     @classmethod
     def build_table(cls, arr, col='mw', PNA=True):
         col = SCNProperty._target_str_mapping(col)
@@ -54,8 +70,7 @@ class SCNProperty(object):
             SCN_dict = {key: value for key, value in vars(SCN_obj).items() if not key.startswith('_')}
             SCN_dicts.append(SCN_dict)
 
-        table = pd.DataFrame(SCN_dicts)
-        return table
+        return pd.DataFrame(SCN_dicts)
 
     @staticmethod
     def _target_str_mapping(target_str):
@@ -153,8 +168,7 @@ class SCNProperty(object):
         return initial_guesses.get(variable, 1.0)
 
 
-table = SCNProperty.build_table(np.arange(80, 90, 1))
+table = SCNProperty.build_table(np.arange(82, 90, 1))
 print(table.to_string())
 
-print(SCNProperty(Tb=630).sg)
 
