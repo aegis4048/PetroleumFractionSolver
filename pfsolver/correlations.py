@@ -5,6 +5,44 @@ import pint
 UREG = pint.UnitRegistry()
 
 
+def mw_scn_model_SCN(mw, scn):
+    """
+    source: [1] eq-7.
+    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
+    """
+    return -mw + 14 * scn - 4
+
+
+def Tb_scn_model_SCN(Tb_R, scn):
+    """
+    source: [1] eq-3.
+    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
+    """
+    Tb_K = UREG('%.15f rankine' % Tb_R).to('kelvin').magnitude
+    return -Tb_K + 1090 - np.exp(6.9955 - 0.11193 * scn**(2/3))
+
+
+def sg_liq_scn_model_SCN(sg_liq, scn):
+    """
+    source: [1] eq-4, and my article
+    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
+    """
+    return -sg_liq + 1.07 - np.exp(3.65097 - 3.8864 * scn**0.1)
+
+
+def sg_liq_mw_model_SCN(sg_liq, mw):
+
+    if mw >= 136:
+        return -sg_liq + 1.07 - np.exp(3.56073 - 2.93886 * mw**0.1)
+    else:
+        return -sg_liq + 3.018e-7 * mw**3 - 1.214e-4 * mw**2 + 0.01719 * mw - 0.06947
+
+
+def Tb_mw_model_SCN(Tb_R, mw):
+    Tb_K = UREG('%.15f rankine' % Tb_R).to('kelvin').magnitude
+    return -Tb_K + 1080 - np.exp(6.97996 - 0.01964 * mw**(2/3))
+
+
 def mw_ghv_paraffinic(mw, ghv):
     """
     source: my article - update this later
@@ -79,30 +117,6 @@ def kelvin_to_rankine(K):
 
     R = K * 9/5
     return R
-
-
-def calc_MW(Nc):
-    """
-    source: [1] eq-7.
-    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
-    """
-    return 14 * Nc - 4
-
-
-def calc_Tb(Nc):
-    """
-    source: [1] eq-3.
-    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
-    """
-    return 1090 - np.exp(6.9955 - 0.11193 * Nc**(2/3))
-
-
-def calc_sg_liq(Nc):
-    """
-    source: [1] eq-4.
-    working range: SCN 6-50, MW 82-698, sg_liq 0.690-0.947, Tb 337-851K, 606-1542R, 146.9-1072F
-    """
-    return 1.07 - np.exp(3.65097 - 3.8864 * Nc**0.1)
 
 
 def calc_RI(Tb, sg_liq):
