@@ -6,6 +6,7 @@ import correlations
 import warnings
 from scipy.optimize import newton, minimize
 import config
+import inspect
 
 
 UREG = pint.UnitRegistry()
@@ -216,7 +217,7 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=False):
+    def __init__(self, comp_dict, summary=False, warnings=True):
 
         self.comp_dict = normalize_composition(comp_dict)
         self.df_GPA = pd.read_pickle("GPA 2145-16 Compound Properties Table - English.pkl")
@@ -224,6 +225,8 @@ class PropertyTable(object):
         self.zs = list(self.comp_dict.values())
 
         self.summary = summary
+        self.warnings = warnings
+        self.warning_msgs = []
 
         self.comp_dict_pure, self.comp_dict_fraction = self._split_known_unknown()
         self.names_pure = list(self.comp_dict_pure.keys())
@@ -256,6 +259,18 @@ class PropertyTable(object):
             'SG_liq': self.sgs_liq_pure.tolist() + [None] * self.n_fraction,
         })
 
+        self.column_mapping = {
+            'Name': ['name', 'compound', 'chemical'],
+            'CAS': ['cas', 'casrn', 'cas number'],
+            'Mole Fraction': ['mole fraction', 'mole frac', 'mole'],
+            'MW': ['mw', 'molar mass', 'molecular weight'],
+            'Mass Fraction': ['mass fraction', 'mass frac', 'mass'],
+            'GHV_gas': ['ghv_gas', 'ghv gas', 'gas ghv', 'vapor ghv', 'ghv_vapor', 'ghv vapor'],
+            'GHV_liq': ['ghv_liq', 'ghv liq', 'liq ghv', 'liquid ghv', 'ghv_liquid', 'ghv liquid'],
+            'SG_gas': ['sg_gas', 'sg gas', 'gas sg', 'vapor sg', 'sg_vapor', 'sg vapor'],
+            'SG_liq': ['sg_liq', 'sg liq', 'liq sg', 'liquid sg', 'sg_liquid', 'sg liquid']
+        }
+
         self.summary_stats_method = {
             "Name": None,
             "CAS": None,
@@ -268,6 +283,48 @@ class PropertyTable(object):
             "SG_liq": 'mass_frac_mean',
         }
         self._handle_summary()
+        self._print_warnings()
+
+    def _map_input_to_key(self, user_input):
+        user_input_lower = user_input.lower()
+        for key, values in self.column_mapping.items():
+            if user_input_lower in values:
+                return key
+        return None  # Or raise an exception if preferred
+
+    def _print_warnings(self):
+        if self.warning_msgs:
+            for message in self.warning_msgs:
+                print(f"\033[91m{message}\033[0m")  # Print each warning message in red
+
+    def _handle_warnings(self, working_range, custom_warning_msg, values_dict):
+
+        if set(working_range.keys()) != set(values_dict.keys()):
+            raise ValueError("The keys in working_range do not match exactly with the keys in values_dict.")
+
+        class_name = self.__class__.__name__
+        method_name = inspect.currentframe().f_back.f_code.co_name
+        warning_base = f"Warning from {class_name}.{method_name}:"
+
+        for key, value in values_dict.items():
+            if key in working_range:
+                min_val, max_val = working_range[key]
+
+                # Handling None as an unbounded range
+                if min_val is not None and value < min_val:
+                    full_warning = f"{warning_base} {key}={value} is below the minimum working range of {min_val}."
+                    self.warning_msgs.append(full_warning)
+                elif max_val is not None and value > max_val:
+                    full_warning = f"{warning_base} {key}={value} exceeds the maximum working range of {max_val}."
+                    self.warning_msgs.append(full_warning)
+
+        # If a custom warning message is provided, append it as a new item.
+        if custom_warning_msg:
+            custom_warning = f"{warning_base} {custom_warning_msg}"
+            self.warning_msgs.append(custom_warning)
+
+        self.warning_msgs.append('Set PropertyTable(warnings=False) to suppress these warnings.')
+        self.warning_msgs = list(set(self.warning_msgs))  # Remove duplicates when this function is executed multiple times
 
     def calc_summary(self):
 
@@ -310,15 +367,23 @@ class PropertyTable(object):
             raise ValueError("Chemical name '%s' is found in the provided composition." % name)
 
         row_index = self.table_[self.table_['Name'] == name].index
-        for key, value in props_dict.items():
-            if key in self.table_.columns:
-                self.table_.loc[row_index, key] = value
-            else:
-                raise ValueError(f"Column '{key}' does not exist in the DataFrame.")
 
-        # execute twice because the columns are computed from left to right.
+
+
+        for key, value in props_dict.items():
+            key = self._map_input_to_key(key)
+            if key is not None:
+                self.table_.loc[row_index, key] = value
+            #if key in self.table_.columns:
+            #    self.table_.loc[row_index, key] = value
+            else:
+                raise ValueError(f"Column '{key}' does not exist in the DataFrame. Valid columns are {self.table_.columns}")
+
+        # three iterations are needed to calculate column properties from left to right
         self._internal_update_property()
         self._internal_update_property()
+        self._internal_update_property()
+        self._print_warnings()
 
     def update_property_total(self):
         if "Total" not in self.table_summary['Name'].values:
@@ -327,6 +392,7 @@ class PropertyTable(object):
         total_row_index = self.table_summary[self.table_summary['Name'] == "Total"].index[0]
         self.table_summary.at[total_row_index, 'Mole Fraction'] = self.table_summary['Mole Fraction'].sum()
         self.table_summary.at[total_row_index, 'Mass Fraction'] = self.table_summary.dropna(subset=['Mass Fraction'])['Mass Fraction'].sum()
+        self._print_warnings()
 
     def calc_mass_fraction(self, row_index):
         MW_total = self.table_summary.at[self.table_summary.index.max(), 'MW']
@@ -350,9 +416,9 @@ class PropertyTable(object):
                     'total_required': [[None], [None], [None]],
                     'required_others': [[None], [None], [None]],
                     'funcs': [
-                        PropertyTable._calc_mw_from_sg_gas,
-                        PropertyTable._calc_mw_from_sg_liq,
-                        PropertyTable._calc_mw_from_ghv_gas,
+                        self._calc_mw_from_sg_gas,
+                        self._calc_mw_from_sg_liq,
+                        self._calc_mw_from_ghv_gas,
                     ],
                 },
             },
@@ -367,7 +433,7 @@ class PropertyTable(object):
                     'required_columns': [['Mole Fraction', 'MW']],
                     'total_required': [['MW']],
                     'required_others': [[None]],
-                    'funcs': [PropertyTable._calc_mass_frac_from_mole_frac_mw],
+                    'funcs': [self._calc_mass_frac_from_mole_frac_mw],
                 },
             },
             'GHV_gas': {
@@ -378,10 +444,10 @@ class PropertyTable(object):
                     'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': [['MW'], ['GHV_liq']],
-                    'total_required': [[None], [None]],
-                    'required_others': [[None], [None]],
-                    'funcs': [PropertyTable._calc_GHV_gas_from_mw, None],
+                    'required_columns': [['MW']],
+                    'total_required': [[None]],
+                    'required_others': [[None]],
+                    'funcs': [self._calc_GHV_gas_from_mw],
                 },
             },
             'GHV_liq': {
@@ -395,7 +461,7 @@ class PropertyTable(object):
                     'required_columns': [['GHV_gas', 'MW']],
                     'total_required': [[None]],
                     'required_others': [[None]],  # maybe self.SCNs
-                    'funcs': [PropertyTable._calc_GHV_liq_from_GHV_gas_MW, None],
+                    'funcs': [self._calc_GHV_liq_from_GHV_gas_MW],
                 },
             },
             'SG_gas': {
@@ -409,7 +475,7 @@ class PropertyTable(object):
                     'required_columns': [['MW']],
                     'total_required': [[None]],
                     'required_others': [[None]],
-                    'funcs': [PropertyTable._calc_sg_gas_from_mw],
+                    'funcs': [self._calc_sg_gas_from_mw],
                 },
             },
             'SG_liq': {
@@ -423,7 +489,7 @@ class PropertyTable(object):
                     'required_columns': [['MW']],
                     'total_required': [[False]],
                     'required_others': [[None]],
-                    'funcs': [PropertyTable._calc_sg_liq_from_mw],
+                    'funcs': [self._calc_sg_liq_from_mw],
                 },
             }
         }
@@ -490,35 +556,53 @@ class PropertyTable(object):
                             self.table_.loc[idx, property] = calculated_value
                             break  # Stop after the first successful calculation
 
-    @staticmethod
-    def _calc_GHV_gas_from_mw(mw):
-        scn_obj = SCNProperty(mw=mw)
+    def _calc_GHV_gas_from_mw(self, mw):
+        scn_obj = SCNProperty(mw=mw, warnings=self.warnings)
         aromatic_fraction = scn_obj.xa
-        return newton(lambda ghv_gas: correlations.mw_ghv(mw, ghv_gas, aromatic_fraction), x0=5000, maxiter=50)
+        aromatic_fraction = 0
+        print('----')
+        print(aromatic_fraction)
+        GHV_gas = newton(lambda ghv_gas: correlations.mw_ghv(mw, ghv_gas, aromatic_fraction), x0=5000, maxiter=50)
+        return GHV_gas
 
-    @staticmethod
-    def _calc_sg_liq_from_mw(mw):
-        scn_obj = SCNProperty(mw=mw)
-        return scn_obj.sg
+    def _calc_sg_liq_from_mw(self, mw):
+        scn_obj = SCNProperty(mw=mw, warnings=self.warnings)
+        sg_liq = scn_obj.sg
 
-    @staticmethod
-    def _calc_sg_gas_from_mw(mw):
-        return newton(lambda sg_gas: correlations.mw_sg_gas(mw, sg_gas), x0=0.65, maxiter=50)
+        working_range = {
+            'MW': (82, 698),
+            'SG_liq': (0.69, 0.947),
+        }
+        custom_warning_msg = None
+        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw, 'SG_liq': sg_liq})
 
-    @staticmethod
-    def _calc_mw_from_sg_gas(sg_gas):
-        return newton(lambda mw: correlations.mw_sg_gas(mw, sg_gas), x0=90, maxiter=50)
+        return sg_liq
 
-    @staticmethod
-    def _calc_mw_from_sg_liq(sg_liq):
-        scn_obj = SCNProperty(sg=sg_liq)
-        return scn_obj.mw
+    def _calc_sg_gas_from_mw(self, mw):
+        sg_gas = newton(lambda sg_gas: correlations.mw_sg_gas(mw, sg_gas), x0=0.65, maxiter=50)
+        return sg_gas
 
-    @staticmethod
-    def _calc_mw_from_ghv_gas(ghv_gas):
+    def _calc_mw_from_sg_gas(self, sg_gas):
+        mw = newton(lambda mw: correlations.mw_sg_gas(mw, sg_gas), x0=90, maxiter=50)
+        return mw
+
+    def _calc_mw_from_sg_liq(self, sg_liq):
+        scn_obj = SCNProperty(sg=sg_liq, warnings=False)
+        mw = scn_obj.mw
+
+        working_range = {
+            'MW': (82, 698),
+            'SG_liq': (0.69, 0.947),
+        }
+        custom_warning_msg = None
+        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw, 'SG_liq': sg_liq})
+
+        return mw
+
+    def _calc_mw_from_ghv_gas(self, ghv_gas):
 
         def objective(mw, GHV_gas):
-            xa = SCNProperty(mw=mw).xa  # provide guess value of xa to improve model accuracy
+            xa = SCNProperty(mw=mw, warnings=self.warnings).xa  # provide guess value of xa to improve model accuracy
             return abs(correlations.mw_GHV_gas_xa(mw, GHV_gas, xa))
 
         # initial MW guess assuming 100% paraffinic composition
@@ -527,23 +611,18 @@ class PropertyTable(object):
         result = minimize(lambda mw: objective(mw[0], ghv_gas), initial_mw_guess, bounds=bounds, tol=0.01)
         mw = result.x[0]
 
+        working_range = {
+            'MW': (82, 698),
+        }
+        custom_warning_msg = None
+        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw})
+
         return mw
 
-    @staticmethod
-    def _calc_mass_frac_from_mole_frac_mw(mole_frac, mw, mw_total):
+    def _calc_mass_frac_from_mole_frac_mw(self, mole_frac, mw, mw_total):
         return mole_frac * mw / mw_total
 
-    @staticmethod
-    def _calc_SG_liq_from_GHV_liq(ghv_liq):
-        return newton(lambda sg_liq: correlations.ghv_liq_sg_liq(ghv_liq, sg_liq), x0=0.65, maxiter=50)
-
-    @staticmethod
-    def _calc_SG_liq_from_GHV_gas_MW(ghv_gas, mw):
-        ghv_liq = PropertyTable._calc_GHV_liq_from_GHV_gas_MW(ghv_gas, mw)
-        return PropertyTable._calc_SG_liq_from_GHV_liq(ghv_liq)
-
-    @staticmethod
-    def _calc_GHV_liq_from_GHV_gas_MW(ghv_gas, mw):
+    def _calc_GHV_liq_from_GHV_gas_MW(self, ghv_gas, mw):
         return newton(lambda ghv_liq: correlations.ghv_liq_ghv_gas_mw(ghv_liq, ghv_gas, mw), x0=0.65, maxiter=50)
 
     def get_properties_pure_compounds(self):
@@ -646,7 +725,7 @@ print(df.to_string())
 print('----------------------------------------------------------')
 
 
-brazos = dict([
+brazos_gas = dict([
     ('hydrogen sulfide', 0.001),
     ('nitrogen', 2.304),
     ('carbon dioxide', 1.505),
@@ -675,37 +754,25 @@ brazos_cond = dict([
     #('Heptanes+', 0.4),
 ])
 
-ptable = PropertyTable(brazos_cond, summary=True)
+ptable = PropertyTable(brazos_gas, summary=True, warnings=False)
+#ptable.update_property('Hexanes+', {'GHV_liq': 20408})
+#ptable.update_property('Hexanes+', {'GHV_gas': 4849})
+#ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
+ptable.update_property('Hexanes+', {'mw': 90.161})
 
-print(ptable.table.to_string())
 
 #ptable.update_property('Hexanes+', {'MW':90.161, 'GHV_gas': 5000})
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})
 #ptable.update_property('Heptanes+', {'MW': 100.5, 'GHV_gas': 6000})
 
-#ptable.update_property('Hexanes+', {'MW': 93.189})  # Brazos condensates
-#ptable.update_property('Hexanes+', {'GHV_liq': 20888})
+#ptable.update_property('Hexanes+', {'GHV_liq': 20677})  # Brazos condensates
+#ptable.update_property('Hexanes+', {'GHV_liq': 20888, 'MW': 93.189})  # Brazos condensates
 #ptable.update_property('Hexanes+', {'GHV_gas': 5129})  # 6:3:1 Hexanes+
 #ptable.update_property('Hexanes+', {'GHV_gas': 4849})  # extended Hexanes+
-ptable.update_property('Hexanes+', {'GHV_gas': 4774})  # extended Hexanes+ for Shamrock
+#ptable.update_property('Hexanes+', {'GHV_gas': 4774})  # extended Hexanes+ for Shamrock
 
 #ptable.update_property_total({'MW': 81.5})
 
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
-print('----------------------------------------------------------')
 print(ptable.table.to_string())
-
-# Todo: replace Riazi correlation for sg_liq of crude oil to SCN solve method.
-# print(ptable.solve_ghv_gas(ghv_total=1320, name='Hexanes+'))
-
-# print(ptable.table.to_string())
-#print(ptable.ghvs_fraction)
-
-
-
-# Todo: implement a weighted average linear regression prediction
-
-# This print line needs to replace the Table 1 of my article
-# Description: MW, Tb, and SG predicted from SCN with methods introduced in [1]. PNA composition predicted with methods introduced in [2] and [4].
-# print(df.to_string())
 
