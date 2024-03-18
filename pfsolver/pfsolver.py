@@ -7,12 +7,13 @@ import warnings
 from scipy.optimize import newton, minimize
 import config
 import inspect
+import math
 
 
 UREG = pint.UnitRegistry()
-
 MAPPING = config.GPA_table_column_mapping
 CONSTANTS = config.constants
+
 
 def normalize_composition(comp_dict):
     """
@@ -20,6 +21,7 @@ def normalize_composition(comp_dict):
     :return: normalized dictionary of composition. {"CH4": 0.3333, "C2H6", 0.66666666}
     """
     total_comp = sum(comp_dict.values())
+    total_comp = round(total_comp, 9)
     if total_comp > 0:
         keys = list(comp_dict.keys())
         last_key = keys[-1]
@@ -31,7 +33,7 @@ def normalize_composition(comp_dict):
         # Adjust the last element so that the sum is exactly 1
         comp_dict[last_key] = 1 - sum(comp_dict.values())
 
-    return comp_dict
+    return comp_dict, total_comp
 
 
 def is_fraction(s):
@@ -55,7 +57,27 @@ def ideal_gas_molar_volume():
 
 class SCNProperty(object):
 
-    def __init__(self, sg=None, mw=None, Tb=None, xa=None, xn=None, xp=None, PNA=True, subtract='naphthenes', warnings=True):
+    def __init__(
+            self,
+            sg=None,
+            mw=None,
+            Tb=None,  # Tb in Rankine
+            xa=None,
+            xn=None,
+            xp=None,
+            PNA=True,
+            model='kf',
+            subtract='naphthenes',
+            warnings=True
+    ):
+
+        self.model = model
+        self.subtract = subtract
+        self.kwargs_options = {
+            'model': ['kf', 'ra'],  # Katz & Firoozabadi (1978), Riazi & Al-Sahhaf (1996)
+            'subtract': ['naphthenes', 'paraffins', 'aromatics'],
+        }
+        self._validate_kwargs()
 
         # Tb in rankine
         self.sg = None
@@ -64,14 +86,13 @@ class SCNProperty(object):
         self.xa = None
         self.xn = None
         self.xp = None
-        self._SUS_100 = None
-        self._VGC = None
-        self._VGF = None
+        self.SUS_100 = None
+        self.VGC = None
+        self.VGF = None
         self.ri = None
-        self._RI_intercept = None
+        self.RI_intercept = None
         self.v100 = None
         self.v210 = None
-        self._subtract = subtract
 
         self._attributes = {
             'sg': sg,
@@ -79,9 +100,16 @@ class SCNProperty(object):
             'Tb': Tb,
         }
 
+        if self.model == 'kf':
+            func_Tb_mw = correlations.Tb_mw_model_SCN_KF
+            func_sg_mw = correlations.sg_mw_model_SCN_KF
+        else:
+            func_Tb_mw = correlations.Tb_mw_model_SCN_RA
+            func_sg_mw = correlations.sg_mw_model_SCN_RA
+
         self._correlations = {
-            correlations.Tb_mw_model_SCN: ['Tb', 'mw'],
-            correlations.sg_liq_mw_model_SCN: ['sg', 'mw'],
+            func_Tb_mw: ['Tb', 'mw'],
+            func_sg_mw: ['sg', 'mw'],
         }
         self.resolve_dependencies()
         self.assign_attributes()
@@ -94,13 +122,26 @@ class SCNProperty(object):
         self._attributes = {key: float(f"{value:.{n}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
         self._round_attributes(n)
 
-        self._range_warnings = {
-            'sg': (0.69, 0.947),
-            'mw': (82, 698),
-            'Tb': (606.6, 1531.8)
-        }
+        if model == 'kf':
+            self._range_warnings = {
+                'sg': (0.685, 0.937),
+                'mw': (84, 626),
+                'Tb': (606.7, 1486.7)
+            }
+        else:
+            self._range_warnings = {
+                'sg': (0.690, 0.947),
+                'mw': (82, 698),
+                'Tb': (606.6, 1531.8)
+            }
         if warnings:
             self._check_ranges()
+
+    def _validate_kwargs(self):
+        for model_name, model_choices in self.kwargs_options.items():
+            user_choice = getattr(self, model_name)
+            if user_choice is None or user_choice not in model_choices:
+                raise ValueError(f"Invalid {model_name}: {user_choice}. Valid options: {model_choices}.")
 
     def _check_ranges(self):
         for attr, (min_val, max_val) in self._range_warnings.items():
@@ -109,37 +150,35 @@ class SCNProperty(object):
                 warnings.warn(f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warnings=False to suppress this warning.")
 
     @classmethod
-    def build_table(cls, arr, col='mw', PNA=True):
-        col = SCNProperty._target_str_mapping(col)
+    def build_table(cls, arr, col='mw', output_keys=None, **kwargs):
+        available_keys = ['sg', 'mw', 'Tb', 'xp', 'xn', 'xa', 'ri', 'v100', 'v210', 'SUS_100', 'VGC', 'VGF', 'RI_intercept']
+        available_input_keys = ['sg', 'mw', 'Tb']
+
+        if output_keys is None:
+            output_keys = ['sg', 'mw', 'Tb', 'xp', 'xn', 'xa', 'ri', 'v100', 'v210']
+
+        if not all(key in available_keys for key in output_keys):
+            invalid_keys = [key for key in output_keys if key not in available_keys]
+            raise ValueError(f"Invalid keys in output_keys: {invalid_keys}. Valid options: {available_keys}.")
+
+        if col not in available_input_keys:
+            raise ValueError(f"Invalid col specified: {col}. Valid options: {available_input_keys}.")
+
+        if col in output_keys:
+            output_keys.remove(col)
+
         SCN_dicts = []
         for item in arr:
-            SCN_obj = SCNProperty(**{col: item}, PNA=PNA)
-            SCN_dict = {key: value for key, value in vars(SCN_obj).items() if not key.startswith('_')}
+            SCN_obj = SCNProperty(**{col: item}, **kwargs)
+            SCN_dict = {key: value for key, value in vars(SCN_obj).items() if key in output_keys}
             SCN_dicts.append(SCN_dict)
 
-        return pd.DataFrame(SCN_dicts)
+        return_df = pd.DataFrame(SCN_dicts)
+        return_df.insert(loc=0, column=col, value=arr)
 
-    @staticmethod
-    def _target_str_mapping(target_str):
+        return return_df
 
-        target = target_str.lower()
-        valid_targets = ['sg', 'mw', 'tb', 'xp', 'xn', 'xa', 'ri', 'v100', 'v210']
-        if target not in valid_targets:
-            raise ValueError(f"Invalid target '{target}'. Valid targets are {valid_targets}.")
-
-        mapping = {
-            'sg': 'sg',
-            'mw': 'mw',
-            'tb': 'Tb',
-            'xp': 'xp',
-            'xn': 'xn',
-            'xa': 'xa',
-            'ri': 'ri',
-            'v100': 'v100',
-            'v210': 'v210'
-        }
-        return mapping[target]
-
+    # round to n significant figures
     def _round_attributes(self, n):
         for attr in vars(self):
             value = getattr(self, attr)
@@ -147,29 +186,26 @@ class SCNProperty(object):
                 setattr(self, attr, float(f"{value:.{n}g}"))
 
     def calc_PNA_composition(self):
-
         self.ri = correlations.calc_RI(self.Tb, self.sg)
-        self._RI_intercept = correlations.calc_RI_intercept(self.sg, self.ri)
+        self.RI_intercept = correlations.calc_RI_intercept(self.sg, self.ri)
         self.v100, self.v210 = correlations.calc_v100_v210(self.Tb, self.sg)
 
         if self.mw > 200:
-            self._SUS_100 = correlations.calc_SUS_100(self.v100)
-            self._VGC = correlations.calc_VGC(self.sg, self._SUS_100)
-            self._VG = self._VGC
+            self.SUS_100 = correlations.calc_SUS_100(self.v100)
+            self.VGC = correlations.calc_VGC(self.sg, self.SUS_100)
+            self.VG = self.VGC
         else:
-            self._VGF = correlations.calc_VGF(self.sg, self.v100)
-            self._VG = self._VGF
+            self.VGF = correlations.calc_VGF(self.sg, self.v100)
+            self.VG = self.VGF
 
-        xp, xn, xa = correlations.calc_PNA_comp(self.mw, self._VG, self._RI_intercept)
+        xp, xn, xa = correlations.calc_PNA_comp(self.mw, self.VG, self.RI_intercept)
 
-        if self._subtract == 'naphthenes':
+        if self.subtract == 'naphthenes':
             self.xn = 1 - xp - xa
-        elif self._subtract == 'paraffins':
+        elif self.subtract == 'paraffins':
             self.xp = 1 - xn - xa
-        elif self._subtract == 'aromatics':
+        else:  # self.subtract == 'aromatics':
             self.xa = 1 - xp - xn
-        else:
-            raise ValueError('subtract must be one of "naphthenes", "paraffins", or "aromatics"')
 
         return xp, xn, xa
 
@@ -189,13 +225,10 @@ class SCNProperty(object):
                 if len(unresolved_vars) == 1:
                     unresolved_var = unresolved_vars[0]
                     resolved_vars = [self._attributes[var] for var in variables if var in resolved]
-                    try:
-                        self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars)), x0=self.get_initial_guess(unresolved_var))
-                        resolved.add(unresolved_var)
-                        resolved_this_iteration = True
-                    except RuntimeError as e:
-                        print("Error in calculating {}: {}".format(unresolved_var, e))
-                        return
+
+                    self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars)), x0=self.get_initial_guess(unresolved_var))
+                    resolved.add(unresolved_var)
+                    resolved_this_iteration = True
 
             if not resolved_this_iteration:
                 break
@@ -217,16 +250,23 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=False, warnings=True):
+    def __init__(self, comp_dict, summary=False, warning=True):
 
-        self.comp_dict = normalize_composition(comp_dict)
+        self.warning = warning
+        self.warning_msgs = []
+        self.summary = summary
+
+        self.comp_dict, self.unnormalized_sum = normalize_composition(comp_dict)
+        if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
+            comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
+            comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
+            warnings.warn(
+                f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
+                f"To suppress this warning, replace with a normalized composition, Or set warnings=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n")
+
         self.df_GPA = pd.read_pickle("GPA 2145-16 Compound Properties Table - English.pkl")
         self.names = list(self.comp_dict.keys())
         self.zs = list(self.comp_dict.values())
-
-        self.summary = summary
-        self.warnings = warnings
-        self.warning_msgs = []
 
         self.comp_dict_pure, self.comp_dict_fraction = self._split_known_unknown()
         self.names_pure = list(self.comp_dict_pure.keys())
@@ -277,13 +317,14 @@ class PropertyTable(object):
             "Mole Fraction": 'sum',
             "MW": 'mole_frac_mean',
             "Mass Fraction": 'sum',
-            "GHV_gas": 'mole_frac_mean',
-            "GHV_liq": 'mole_frac_mean',
-            "SG_gas": 'mass_frac_mean',
-            "SG_liq": 'mass_frac_mean',
+            "GHV_gas": 'mole_frac_mean',  # mass_frac_mean for other option
+            "GHV_liq": 'mass_frac_mean',
+            "SG_gas": 'mole_frac_mean',
+            "SG_liq": 'mole_frac_mean',
         }
         self._handle_summary()
         self._print_warnings()
+        self._internal_update_property()
 
     def _map_input_to_key(self, user_input):
         user_input_lower = user_input.lower()
@@ -323,8 +364,9 @@ class PropertyTable(object):
             custom_warning = f"{warning_base} {custom_warning_msg}"
             self.warning_msgs.append(custom_warning)
 
-        self.warning_msgs.append('Set PropertyTable(warnings=False) to suppress these warnings.')
-        self.warning_msgs = list(set(self.warning_msgs))  # Remove duplicates when this function is executed multiple times
+        if len(self.warning_msgs) > 0:
+            self.warning_msgs.append('Set PropertyTable(warnings=False) to suppress these warnings.')
+            self.warning_msgs = list(set(self.warning_msgs))  # Remove duplicates when this function is executed multiple times
 
     def calc_summary(self):
 
@@ -367,8 +409,6 @@ class PropertyTable(object):
             raise ValueError("Chemical name '%s' is found in the provided composition." % name)
 
         row_index = self.table_[self.table_['Name'] == name].index
-
-
 
         for key, value in props_dict.items():
             key = self._map_input_to_key(key)
@@ -466,7 +506,7 @@ class PropertyTable(object):
             },
             'SG_gas': {
                 'weighted_avg': {
-                    'required_columns': [['Mass Fraction']],
+                    'required_columns': [['Mole Fraction']],
                     'total_required': [['SG_gas']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -557,16 +597,14 @@ class PropertyTable(object):
                             break  # Stop after the first successful calculation
 
     def _calc_GHV_gas_from_mw(self, mw):
-        scn_obj = SCNProperty(mw=mw, warnings=self.warnings)
+        scn_obj = SCNProperty(mw=mw, warnings=self.warning)
         aromatic_fraction = scn_obj.xa
         aromatic_fraction = 0
-        print('----')
-        print(aromatic_fraction)
         GHV_gas = newton(lambda ghv_gas: correlations.mw_ghv(mw, ghv_gas, aromatic_fraction), x0=5000, maxiter=50)
         return GHV_gas
 
     def _calc_sg_liq_from_mw(self, mw):
-        scn_obj = SCNProperty(mw=mw, warnings=self.warnings)
+        scn_obj = SCNProperty(mw=mw, warnings=self.warning)
         sg_liq = scn_obj.sg
 
         working_range = {
@@ -575,7 +613,6 @@ class PropertyTable(object):
         }
         custom_warning_msg = None
         self._handle_warnings(working_range, custom_warning_msg, {'MW': mw, 'SG_liq': sg_liq})
-
         return sg_liq
 
     def _calc_sg_gas_from_mw(self, mw):
@@ -602,7 +639,7 @@ class PropertyTable(object):
     def _calc_mw_from_ghv_gas(self, ghv_gas):
 
         def objective(mw, GHV_gas):
-            xa = SCNProperty(mw=mw, warnings=self.warnings).xa  # provide guess value of xa to improve model accuracy
+            xa = SCNProperty(mw=mw, warnings=self.warning).xa  # provide guess value of xa to improve model accuracy
             return abs(correlations.mw_GHV_gas_xa(mw, GHV_gas, xa))
 
         # initial MW guess assuming 100% paraffinic composition
@@ -719,8 +756,8 @@ class PropertyTable(object):
                 if Hc is None:
                     raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (name, 'Hcs, heat of combustion [J/mol]'))
 
-
-df = SCNProperty.build_table([i for i in range(82, 94, 1)])
+#df = SCNProperty.build_table([i for i in range(82, 94, 1)], col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], warnings=True, model='kf')
+df = SCNProperty.build_table([i for i in range(80, 94, 1)], col='mw', output_keys=['sg', 'Tb'], warnings=True, model='ra')
 print(df.to_string())
 print('----------------------------------------------------------')
 
@@ -754,11 +791,78 @@ brazos_cond = dict([
     #('Heptanes+', 0.4),
 ])
 
-ptable = PropertyTable(brazos_gas, summary=True, warnings=False)
+ovintive_tomlin = dict([
+    ('nitrogen', 6.436),
+    ('carbon dioxide', 0.848),
+    ('methane', 30.232),
+    ('ethane', 14.229),
+    ('propane', 16.889),
+    ('isobutane', 3.797),
+    ('n-butane', 11.066),
+    ('i-pentane', 3.141),
+    ('n-pentane', 5.070),
+    ('n-hexane', 6.776),
+    ('heptane', 1.462),
+    ('n-octane', 0.053),
+    ('n-nonane', 0.001),
+    #('Heptanes+', 0.4),
+])
+
+# Shamrock
+shamrock = dict([
+    ('nitrogen', 0.86),  # 0.86
+    ('carbon dioxide', 0.374),
+    ('methane', 71.351),
+    ('ethane', 12.287),
+    ('propane', 9.147),
+    ('isobutane', 0.985),
+    ('n-butane', 3.180),
+    ('i-pentane', 0.628),
+    ('n-pentane', 0.743),
+    ('Hexanes+', 0.445),
+])
+
+
+# Brazos Trees Gas
+#ptable = PropertyTable(brazos_gas, summary=True, warnings=True)
 #ptable.update_property('Hexanes+', {'GHV_liq': 20408})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4849})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
-ptable.update_property('Hexanes+', {'mw': 90.161})
+#ptable.update_property('Hexanes+', {'gas sg': 3.1228})
+#ptable.update_property('Hexanes+', {'mw': 90.161})
+
+#ptable.update_property('Hexanes+', {'liquid sg': 0.65})
+
+# Brazos Trees Gas
+#ptable = PropertyTable(ovintive_tomlin, summary=True, warnings=True)
+
+# Shamrock
+ptable = PropertyTable(shamrock, summary=True, warning=True)
+#ptable.update_property('Hexanes+', {'GHV_liq': 20677})
+#ptable.update_property('Hexanes+', {'GHV_gas': 4774})
+#ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
+#ptable.update_property('Hexanes+', {'gas sg': 3.0180})
+ptable.update_property('Hexanes+', {'mw': 87.665})
+
+
+
+temp = {
+    'nitrogen': 0.09062557328930472,
+    'carbon dioxide': 0.0034305631994129516,
+    'methane': 0.6544762428912125,
+    'ethane': 0.11270409099247844,
+    'propane': 0.08390203632361035,
+    'isobutane': 0.009035039442304164,
+    'n-butane': 0.029168959823885524,
+    'i-pentane': 0.005760410933773619,
+    'n-pentane': 0.0068152632544487245,
+    'Hexanes+': 0.004081819849568791
+}
+
+#ptable.update_property('Hexanes+', {'mw': 87.665, 'liquid sg': 0.6933})
+#ptable.update_property('Hexanes+', {'liquid sg': 0.6933, 'mw': 87.665})
+#ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
+#ptable.update_property('Hexanes+', {'liquid sg': 0.6933, 'mw': 87.665})
 
 
 #ptable.update_property('Hexanes+', {'MW':90.161, 'GHV_gas': 5000})
@@ -774,5 +878,8 @@ ptable.update_property('Hexanes+', {'mw': 90.161})
 #ptable.update_property_total({'MW': 81.5})
 
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
-print(ptable.table.to_string())
+#print(ptable.table.to_string())
 
+# ToDo: calculate mass fraction even when values are not updated, like when no plus fractions are provided. Since everything else is known, it should calculate
+# Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
+# Todo: Do StateCordell, which explicitly shows 6:3:1

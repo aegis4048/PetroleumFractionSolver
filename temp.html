@@ -1,0 +1,159 @@
+<div class="ordered-list">
+<h2>Notes: T<sub>b</sub> correlation</h2>
+<ol class="no-bullets">
+<li><p style="margin: 10px 0;">While not the main focus of this article, here I introduce two methodologies for predicting normal boiling point T<sub>b</sub> as its one of the three defining parameters required for characterization of plus fractions (T<sub>b</sub>-SG<sub>liq</sub>-MW).</p></li>
+<li>
+<p><strong>1. Uni-variate prediction from MW with SCN models</strong></p>
+<p>The same variant of <a class="internal-link" href="#eq-1">Eq-1a</a> is applicable to predict T<sub>b</sub> with MW from SCN methods, just needs to fit different coefficient values and the exponential parameter. If only SG<sub>liq</sub> is available, the corresponding SCN MW value can be looked up from <a class="internal-link" href="#table-3">Table 3</a>, or can be back-solved with non-linear solvers as shown in <a class="internal-link" href="#code_snippet_1">Code Snippet #1</a>.</p>
+<p>$$ T_b (^{\circ}R) = 1943 - \text{exp}(7.568 - 1.964 \times 10^{-2}MW^{2/3}) \tag{A}$$</p>
+<p>Both SCN models by Riazi &amp; Al-Shahhaf (1996) and Katz &amp; Firoozabadi (1978) report near-identical coefficients. <a class="internal-link" href="#fig-A">Figure A</a> below shows performance of the model fit.</p>
+<div class="row full_screen_margin_80 mobile_responsive_plot_full_width" style="" id="fig-A">
+<div class="col"><img src="jupyter_images/liquid_sg_mw_Tb_correlation2.png"></div>
+</div>
+<div class="col-12 fig-title">
+    <p class="image-description"><strong>Figure A:</strong> Prediction of T<sub>b</sub> from MW with <a class="internal-link" href="#eq-A">Eq-A</a>. The coefficients are fitted with SCN T<sub>b</sub>-MW data provided by Riazi &amp; Al-Shahhaf (1996) and Katz &amp; Firoozabadi (1978) shown in <a class="internal-link" href="#table-2">Table 2</a>.
+    </p>
+</div>
+
+<div class="solution_panel closed" style="margin-top: 10px;">
+<div class="solution_title">
+    <p class="solution_title_string">Source Code For Figure (16)</p>
+    <ul class="nav navbar-right panel_toolbox">
+        <li><a class="collapse-link"><i class="fa fa-chevron-down"></i></a></li>
+    </ul>
+<div class="clearfix"></div>
+</div>
+<div class="solution_content">
+    <pre>
+        <code class="language-python">
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+df = pd.read_csv('scn_table.csv')
+
+MW_1 = df['MW [K&F]'].dropna()
+SG_1 = df['SG [K&F]'].dropna()
+Tb_1 = df['Tb [R] [K&F]'].dropna()
+
+MW_2 = df['MW [R&A]']
+SG_2 = df['SG [R&A]']
+Tb_2 = df['Tb [R] [R&A]']
+
+MW_3 = df['MW [Normal Paraffins]']
+SG_3 = df['SG [Normal Paraffins]']
+Tb_3 = df['Tb [R] [Normal Paraffins]']
+
+################################## Model Fit ################################################
+
+def eqA(MW, a, b, c):
+    return a - np.exp(b - c * MW ** (2/3))  # 2/3 is an empirically chosen hyper parameter
+
+popt_KF, pcov_KF = curve_fit(eqA, MW_1, Tb_1, p0=[1080, 7, 0.02])
+popt_RA, pcov_RA = curve_fit(eqA, MW_2, Tb_2, p0=[1080, 7, 0.02])
+
+x = np.arange(50, 500, 2)
+y_KF = eqA(x, *popt_KF)
+y_RA = eqA(x, *popt_RA)
+
+#############################################################################################
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+
+line1, = ax.plot(x, y_KF, label='Fit on Katz & Firoozabadi (1978) data: Eq-A', c='navy')
+line2, = ax.plot(x, y_RA, label='Fit on Riazi & Al-Sahhaf (1996) data: Eq-A', c='red')
+
+scatter1 = ax.scatter(MW_1, Tb_1, label='Katz & Firoozabadi (1978)', marker='d', c='red')
+scatter2 = ax.scatter(MW_2, Tb_2, label='Riazi & Al-Sahhaf (1996)', marker='+', c='navy', s=100)
+scatter3 = ax.scatter(MW_3, Tb_3, label='Normal paraffins', marker='v', c='k')
+
+legend1 = ax.legend(handles=[scatter1, scatter2, scatter3], fontsize=10, ncol=3, loc='upper left')
+ax.add_artist(legend1)
+ax.legend(handles=[line1, line2], loc='lower right', fontsize=10)
+
+
+ax.minorticks_on()
+ax.grid(axis='y', which='major', linestyle='--', color='grey', alpha=0.5)
+ax.grid(axis='x', which='major', color='grey', linestyle='--', alpha=0.5)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+
+ax.set_xlabel('Molecular Weight', fontsize=13)
+ax.set_ylabel('Normal Boiling Point [R]', fontsize=13)
+ax.text(0.02, 0.05, 'aegis4048.github.io', fontsize=12, ha='left', va='center',
+    transform=ax.transAxes, color='grey', alpha=0.5)
+
+def setbold(txt):
+    return ' '.join([r"$\bf{" + item + "}$" for item in txt.split(' ')])
+
+bold_txt = setbold('MW vs. T_{b} Correlation Fit (Eq A)')
+plain_txt = r', for SCN groups'
+fig.suptitle(bold_txt + plain_txt, verticalalignment='top', x=0, horizontalalignment='left', fontsize=13, y=0.96)
+yloc = 0.88
+ax.annotate('', xy=(0.01, yloc + 0.01), xycoords='figure fraction', xytext=(1.02, yloc + 0.01),
+            arrowprops=dict(arrowstyle="-", color='k', lw=0.7))
+
+ax.set_xlim(50, 450)
+
+fig.tight_layout()
+
+fig.savefig('liquid_sg_mw_Tb_correlation.png', dpi=300, bbox_inches='tight')
+        </code>
+    </pre>
+</div>
+</div>
+<li>
+<p><strong>2. Bi-variate prediction with SG<sub>liq</sub> and MW</strong></p>
+    <p>There are MANY T<sub>b</sub>-SG<sub>liq</sub>-MW correlation models available. Unfortunately there is no consent in the literature about which correlation can be deemed most appropriate to predict the molecular weight of petroleum fluids. <a class="internal-link" href="#table-A">Table A</a> below published by Stratiev et al. (2023)<sup><a class="internal-link" href="#id6" id="id61">[6]</a></sup> presents model evaluation results on 430 publicly available data samples (<a href="https://www.mdpi.com/article/10.3390/pr11020426/s1">link</a>), reporting that the model by Riazi and Daubert (2005)<sup><a class="internal-link" href="#id1" id="id12">[1]</a>, pg.55, Eq-2.51</sup> shown in <a class="internal-link" href="#eq-B">Eq-B</a> returned the lowest %AAD. </p>
+    <div class="row full_screen_margin_95 mobile_responsive_plot_full_width" style="" id="table-A">
+  <div class="col"><img src="jupyter_images/liquid_sg_model_evaluation_paper2.png"></div>
+  </div>
+    <div class="col-12 fig-title" style="margin-top: 5px;">
+      <p class="image-description"><strong>Table A:</strong> Model evaluation results on 430 publicly available data samples by Stratiev et al. (2023)<sup><a class="internal-link" href="#id6" id="id62">[6]</a></sup> showing %AAD of various T<sub>b</sub>-SG<sub>liq</sub>-MW correlation models.
+      </p>
+  </div>
+    <p>$$ MW = 42.965[ \text{exp}(2.907 \times 10^{-4}T_{b} - 7.78712SG + 2.08476 \times 10^{-3}T_bSG)]T_b^{1.26007}SG^{4.98308} \tag{B}$$</p>
+    <p>T<sub>b</sub> is in degree kelvin (°K). A python non-linear solver can be implemented to solve for T<sub>b</sub> from SG<sub>liq</sub> and MW as shown below:  </p>
+    <div class="solution_panel" style="margin-top: 20px;">
+    <div class="solution_title">
+        <p class="solution_title_string">T<sub>b</sub> prediction from SG<sub>liq</sub> and MW</p>
+        <ul class="nav navbar-right panel_toolbox">
+            <li><a class="collapse-link"><i class="fa fa-chevron-up"></i></a></li>
+        </ul>
+    <div class="clearfix"></div>
+    </div>
+    <div class="solution_content">
+        <pre>
+            <code class="language-python">
+            import numpy
+            from scipy.optimize import newton
+            import pint
+
+            ureg = pint.UnitRegistry()
+
+
+            def eqB(Tb, mw, sg_liq):
+                """
+                notes:
+                working range: mw 70~700, Tb 300~850K (90-1050F), API 14.4~93.
+                errors: 3.5% for mw < 300, 4.7% for mw > 300.
+                """
+                return -mw + 42.965 * (np.exp(2.097e-4 * Tb - 7.78712 * sg_liq + 2.08476e-3 * Tb * sg_liq)) * Tb**1.26007 * sg_liq**4.983098
+
+            # SCN = 7 by Katz & Firoozabadi in Table 1
+            mw = 96
+            sg = 0.722
+
+            Tb = newton(lambda Tb: eqB(Tb, mw, sg), x0=0.65, maxiter=50)
+            Tb = ureg('%.15f kelvin' % Tb).to('rankine')._magnitude
+
+            print(Tb)
+            >>> 653.240538480157
+            </code>
+        </pre>
+    </div>
+    </div>
+</li>
+</ol>
+</div>

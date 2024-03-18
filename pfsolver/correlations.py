@@ -30,17 +30,45 @@ def sg_liq_scn_model_SCN(sg_liq, scn):
     return -sg_liq + 1.07 - np.exp(3.65097 - 3.8864 * scn**0.1)
 
 
-def sg_liq_mw_model_SCN(sg_liq, mw):
-
-    if mw >= 136:
-        return -sg_liq + 1.07 - np.exp(3.56073 - 2.93886 * mw**0.1)
+def sg_mw_model_SCN_KF(sg, mw):
+    """
+    source: my article (eq 1a and 1b)
+    working range: 84 < MW < 626 | 0.685 < sg < 0.937 | 606.7 < Tb < 1486.7
+    """
+    if mw < 136:
+        return -sg -3.16160517e-01 + 2.32199514e-02 * mw - 1.71830840e-04 * mw ** 2 + 4.43897650e-07 * mw ** 3
     else:
-        return -sg_liq + 3.018e-7 * mw**3 - 1.214e-4 * mw**2 + 0.01719 * mw - 0.06947
+        return -sg + 1.103 - np.exp(2.934 - 2.485 * mw**0.1)
 
 
-def Tb_mw_model_SCN(Tb_R, mw):
-    Tb_K = UREG('%.15f rankine' % Tb_R).to('kelvin').magnitude
-    return -Tb_K + 1080 - np.exp(6.97996 - 0.01964 * mw**(2/3))
+def sg_mw_model_SCN_RA(sg, mw):
+    """
+    source: my article (eq 1a and 1b)
+    working range: 82 < MW < 698 | 0.690 < sg < 0.947 | 606.6 < Tb < 1531.8
+    """
+
+    if mw < 136:
+        return -sg -6.94728285e-02 + 1.71874520e-02 * mw - 1.21389818e-04 * mw ** 2 + 3.01844635e-07 * mw ** 3
+    else:
+        return -sg + 1.078 - np.exp(3.403 - 2.824 * mw**0.1)
+
+
+def Tb_mw_model_SCN_KF(Tb_R, mw):
+    """
+    source: my article (eq A)
+    unit: Tb in R
+    working range: 84 < MW < 626 | 0.685 < sg < 0.937 | 606.7 < Tb < 1486.7
+    """
+    return -Tb_R + 1.94302832e+03 - np.exp(7.56781597 - 1.96435739e-02 * mw**(2/3))
+
+
+def Tb_mw_model_SCN_RA(Tb_R, mw):
+    """
+    source: my article (eq A)
+    unit: Tb in R
+    working range: 82 < MW < 698 | 0.690 < sg < 0.947 | 606.6 < Tb < 1531.8
+    """
+    return -Tb_R + 1.94547935e+03 - np.exp(7.56885268 - 1.96209827e-02 * mw**(2/3))
 
 
 def mw_ghv_paraffinic(mw, ghv):
