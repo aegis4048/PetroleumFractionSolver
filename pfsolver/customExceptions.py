@@ -1,0 +1,3 @@
+class SCNPropertyWarning(UserWarning):
+    pass
+

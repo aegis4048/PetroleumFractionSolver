@@ -4,36 +4,18 @@ import pint
 from thermo import ChemicalConstantsPackage
 import correlations
 import warnings
+from customExceptions import SCNPropertyWarning
 from scipy.optimize import newton, minimize
 import config
 import inspect
 import math
+from utilities import normalize_composition, ideal_gas_molar_volume
+import copy
 
 
 UREG = pint.UnitRegistry()
 MAPPING = config.GPA_table_column_mapping
 CONSTANTS = config.constants
-
-
-def normalize_composition(comp_dict):
-    """
-    :param comp_dict: un-normalized dictionary of composition. {"CH4": 3, "C2H6", 6}
-    :return: normalized dictionary of composition. {"CH4": 0.3333, "C2H6", 0.66666666}
-    """
-    total_comp = sum(comp_dict.values())
-    total_comp = round(total_comp, 9)
-    if total_comp > 0:
-        keys = list(comp_dict.keys())
-        last_key = keys[-1]
-        normalized_values = [v / total_comp for v in comp_dict.values()]
-
-        # Normalize all but the last element
-        comp_dict = {keys[i]: normalized_values[i] for i in range(len(keys) - 1)}
-
-        # Adjust the last element so that the sum is exactly 1
-        comp_dict[last_key] = 1 - sum(comp_dict.values())
-
-    return comp_dict, total_comp
 
 
 def is_fraction(s):
@@ -44,17 +26,6 @@ def is_fraction(s):
     return any(substring in s.lower() for substring in substrings)
 
 
-def ideal_gas_molar_volume():
-    """
-    PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
-    R = 8.31446261815324 ((m^3-Pa)/(mol-K))
-    T = 288.7056 K, 60F, standard temperature
-    P = 101325 Pa, 1 atm, standard pressure
-    :return: ideal gas molar volume in a standard condition (m^3/mol)
-    """
-    return CONSTANTS['R'] * CONSTANTS['T_STANDARD'] / CONSTANTS['P_STANDARD']
-
-
 class SCNProperty(object):
 
     def __init__(
@@ -62,15 +33,16 @@ class SCNProperty(object):
             sg=None,
             mw=None,
             Tb=None,  # Tb in Rankine
-            xa=None,
-            xn=None,
-            xp=None,
             PNA=True,
             model='kf',
             subtract='naphthenes',
-            warnings=True
+            warning=True
     ):
 
+        if sg is None and mw is None and Tb is None:
+            raise ValueError("At least one of sg, mw, or Tb must be provided. From: {}".format(self.__class__.__name__))
+
+        self.warning = warning
         self.model = model
         self.subtract = subtract
         self.kwargs_options = {
@@ -134,20 +106,25 @@ class SCNProperty(object):
                 'mw': (82, 698),
                 'Tb': (606.6, 1531.8)
             }
-        if warnings:
+
+        if self.warning:
             self._check_ranges()
 
     def _validate_kwargs(self):
         for model_name, model_choices in self.kwargs_options.items():
             user_choice = getattr(self, model_name)
             if user_choice is None or user_choice not in model_choices:
-                raise ValueError(f"Invalid {model_name}: {user_choice}. Valid options: {model_choices}.")
+                user_choice_repr = f"'{user_choice}'" if isinstance(user_choice, str) else user_choice
+                raise ValueError(
+                    f"Invalid {model_name}: {user_choice_repr}. Valid options: {model_choices}. From: {self.__class__.__name__}")
 
     def _check_ranges(self):
         for attr, (min_val, max_val) in self._range_warnings.items():
             value = getattr(self, attr, None)
             if value is not None and not (min_val <= value <= max_val):
-                warnings.warn(f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warnings=False to suppress this warning.")
+                warnings.warn(
+                    f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warning=False to suppress this warning. From: {self.__class__.__name__}",
+                    SCNPropertyWarning)
 
     @classmethod
     def build_table(cls, arr, col='mw', output_keys=None, **kwargs):
@@ -250,19 +227,27 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=False, warning=True):
+    def __init__(self, comp_dict, summary=False, warning=True, SCNProperty_kwargs=None):
 
         self.warning = warning
         self.warning_msgs = []
         self.summary = summary
+        self.table_summary = None
+
+        if SCNProperty_kwargs is None:
+            self.SCNProperty_kwargs = {}
+        else:
+            self.SCNProperty_kwargs = SCNProperty_kwargs
+        self.SCNProperty_kwargs.setdefault('warning', self.warning)
 
         self.comp_dict, self.unnormalized_sum = normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
-            comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
-            comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
-            warnings.warn(
-                f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
-                f"To suppress this warning, replace with a normalized composition, Or set warnings=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n")
+            if self.warning:
+                comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
+                comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
+                warnings.warn(
+                    f"From: {self.__class__.__name__}: The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
+                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n")
 
         self.df_GPA = pd.read_pickle("GPA 2145-16 Compound Properties Table - English.pkl")
         self.names = list(self.comp_dict.keys())
@@ -277,7 +262,6 @@ class PropertyTable(object):
         self.n_fraction = len(self.names_fraction)
 
         self.target_props = ['ghv', 'sg_liq_60F', 'sg_gas_60F', 'mw']
-
         self.constants_pure = ChemicalConstantsPackage.constants_from_IDs(self.names_pure)
         self.check_properties_exists()
 
@@ -323,7 +307,6 @@ class PropertyTable(object):
             "SG_liq": 'mole_frac_mean',
         }
         self._handle_summary()
-        self._print_warnings()
         self._internal_update_property()
 
     def _map_input_to_key(self, user_input):
@@ -331,42 +314,8 @@ class PropertyTable(object):
         for key, values in self.column_mapping.items():
             if user_input_lower in values:
                 return key
-        return None  # Or raise an exception if preferred
-
-    def _print_warnings(self):
-        if self.warning_msgs:
-            for message in self.warning_msgs:
-                print(f"\033[91m{message}\033[0m")  # Print each warning message in red
-
-    def _handle_warnings(self, working_range, custom_warning_msg, values_dict):
-
-        if set(working_range.keys()) != set(values_dict.keys()):
-            raise ValueError("The keys in working_range do not match exactly with the keys in values_dict.")
-
-        class_name = self.__class__.__name__
-        method_name = inspect.currentframe().f_back.f_code.co_name
-        warning_base = f"Warning from {class_name}.{method_name}:"
-
-        for key, value in values_dict.items():
-            if key in working_range:
-                min_val, max_val = working_range[key]
-
-                # Handling None as an unbounded range
-                if min_val is not None and value < min_val:
-                    full_warning = f"{warning_base} {key}={value} is below the minimum working range of {min_val}."
-                    self.warning_msgs.append(full_warning)
-                elif max_val is not None and value > max_val:
-                    full_warning = f"{warning_base} {key}={value} exceeds the maximum working range of {max_val}."
-                    self.warning_msgs.append(full_warning)
-
-        # If a custom warning message is provided, append it as a new item.
-        if custom_warning_msg:
-            custom_warning = f"{warning_base} {custom_warning_msg}"
-            self.warning_msgs.append(custom_warning)
-
-        if len(self.warning_msgs) > 0:
-            self.warning_msgs.append('Set PropertyTable(warnings=False) to suppress these warnings.')
-            self.warning_msgs = list(set(self.warning_msgs))  # Remove duplicates when this function is executed multiple times
+        raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
+                         f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
     def calc_summary(self):
 
@@ -402,46 +351,47 @@ class PropertyTable(object):
 
         return summary_df
 
+    def update_total(self, props_dict):
+
+        # check if summary is true
+        if not self.summary:
+            raise ValueError(f"Summary is set to False. Set summary=True to use this method. From: {self.__class__.__name__}")
+
+        # code to update column value of table_summary with chemical_name as column name. table_summary is always a 1 row df.
+        for key, value in props_dict.items():
+            print(key)
+            key = self._map_input_to_key(key)
+            self.table_summary[key] = value
+
+        # three iterations are needed to calculate column properties from left to right
+        # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
+        self._internal_update_property()
+        self._internal_update_property()
+        self._internal_update_property()
+
     # update directly from the user input
     def update_property(self, name, props_dict):
-
-        if name not in self.names:
-            raise ValueError("Chemical name '%s' is found in the provided composition." % name)
+        self._validate_chemical_name(name)
 
         row_index = self.table_[self.table_['Name'] == name].index
 
         for key, value in props_dict.items():
             key = self._map_input_to_key(key)
-            if key is not None:
-                self.table_.loc[row_index, key] = value
-            #if key in self.table_.columns:
-            #    self.table_.loc[row_index, key] = value
-            else:
-                raise ValueError(f"Column '{key}' does not exist in the DataFrame. Valid columns are {self.table_.columns}")
+            self.table_.loc[row_index, key] = value
 
         # three iterations are needed to calculate column properties from left to right
+        # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
         self._internal_update_property()
         self._internal_update_property()
         self._internal_update_property()
-        self._print_warnings()
 
-    def update_property_total(self):
-        if "Total" not in self.table_summary['Name'].values:
-            self.table_summary.loc[self.table_summary.index.max() + 1] = ["Total"] + [np.nan] * (
-                        self.table_summary.shape[1] - 1)
-        total_row_index = self.table_summary[self.table_summary['Name'] == "Total"].index[0]
-        self.table_summary.at[total_row_index, 'Mole Fraction'] = self.table_summary['Mole Fraction'].sum()
-        self.table_summary.at[total_row_index, 'Mass Fraction'] = self.table_summary.dropna(subset=['Mass Fraction'])['Mass Fraction'].sum()
-        self._print_warnings()
-
-    def calc_mass_fraction(self, row_index):
-        MW_total = self.table_summary.at[self.table_summary.index.max(), 'MW']
-        if not pd.isnull(MW_total):
-            self.table_.at[row_index, 'Mass Fraction'] = self.table_.at[row_index, 'Mole Fraction'] * self.table_.at[row_index, 'MW'] / MW_total
-        else:
-            pass
+    def _validate_chemical_name(self, name):
+        if name not in self.names:
+            raise ValueError(f"Chemical name '{name}' is not found in the provided composition: "
+                             f"{self.names}. From: {self.__class__.__name__}")
 
     def _internal_update_property(self):
+
         self.table_summary = self.calc_summary()  # Update Total row first
         rules = {
             'MW': {
@@ -597,22 +547,15 @@ class PropertyTable(object):
                             break  # Stop after the first successful calculation
 
     def _calc_GHV_gas_from_mw(self, mw):
-        scn_obj = SCNProperty(mw=mw, warnings=self.warning)
+        scn_obj = SCNProperty(mw=mw, **self.SCNProperty_kwargs)
         aromatic_fraction = scn_obj.xa
         aromatic_fraction = 0
         GHV_gas = newton(lambda ghv_gas: correlations.mw_ghv(mw, ghv_gas, aromatic_fraction), x0=5000, maxiter=50)
         return GHV_gas
 
     def _calc_sg_liq_from_mw(self, mw):
-        scn_obj = SCNProperty(mw=mw, warnings=self.warning)
+        scn_obj = SCNProperty(mw=mw, **self.SCNProperty_kwargs)
         sg_liq = scn_obj.sg
-
-        working_range = {
-            'MW': (82, 698),
-            'SG_liq': (0.69, 0.947),
-        }
-        custom_warning_msg = None
-        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw, 'SG_liq': sg_liq})
         return sg_liq
 
     def _calc_sg_gas_from_mw(self, mw):
@@ -624,22 +567,17 @@ class PropertyTable(object):
         return mw
 
     def _calc_mw_from_sg_liq(self, sg_liq):
-        scn_obj = SCNProperty(sg=sg_liq, warnings=False)
+        scn_obj = SCNProperty(sg=sg_liq, **self.SCNProperty_kwargs)
         mw = scn_obj.mw
-
-        working_range = {
-            'MW': (82, 698),
-            'SG_liq': (0.69, 0.947),
-        }
-        custom_warning_msg = None
-        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw, 'SG_liq': sg_liq})
-
         return mw
 
     def _calc_mw_from_ghv_gas(self, ghv_gas):
 
         def objective(mw, GHV_gas):
-            xa = SCNProperty(mw=mw, warnings=self.warning).xa  # provide guess value of xa to improve model accuracy
+            # turn off warning because this is party of iterative convergence
+            SCNProperty_kwargs_copy = copy.deepcopy(self.SCNProperty_kwargs)
+            SCNProperty_kwargs_copy['warning'] = False
+            xa = SCNProperty(mw=mw, **self.SCNProperty_kwargs).xa  # provide guess value of xa to improve model accuracy
             return abs(correlations.mw_GHV_gas_xa(mw, GHV_gas, xa))
 
         # initial MW guess assuming 100% paraffinic composition
@@ -648,11 +586,8 @@ class PropertyTable(object):
         result = minimize(lambda mw: objective(mw[0], ghv_gas), initial_mw_guess, bounds=bounds, tol=0.01)
         mw = result.x[0]
 
-        working_range = {
-            'MW': (82, 698),
-        }
-        custom_warning_msg = None
-        self._handle_warnings(working_range, custom_warning_msg, {'MW': mw})
+        # final check to raise warning if anything is outside the working range
+        SCNProperty(mw=mw, **self.SCNProperty_kwargs)
 
         return mw
 
@@ -693,8 +628,8 @@ class PropertyTable(object):
                         ghv_liq = Hc * mw
                         ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
                     elif Hc is None:
-                        raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (
-                        name, 'Hcs, heat of combustion [J/mol]'))
+                        raise ValueError(
+                            f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
                     else:
                         ghv_ideal_gas = 0
                         ghv_liq = 0
@@ -707,8 +642,8 @@ class PropertyTable(object):
                     ghv_liq = Hc * mw
                     ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
                 elif Hc is None:
-                    raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (
-                    name, 'Hcs, heat of combustion [J/mol]'))
+                    raise ValueError(
+                        f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
                 else:
                     ghv_ideal_gas = 0
                     ghv_liq = 0
@@ -748,18 +683,16 @@ class PropertyTable(object):
         for rhol_60F_mass, mw, Hc, name in zip(rhol_60Fs_mass, mws, Hcs, names):
             if 'sg_liq_60F' in self.target_props or 'sg_gas_60F' in self.target_props:
                 if rhol_60F_mass is None:
-                    raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (name, 'rhol_60Fs_mass, liquid mass density at 60F'))
+                    raise ValueError(
+                        f"Chemical name '{name}' is recognized but missing a required data ('rhol_60F_mass, liquid mass density at 60F'). From: {self.__class__.__name__}")
             if 'mw' in self.target_props:
                 if mw is None:
-                    raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (name, 'MWs, molecular weight [g/mol]'))
+                    raise ValueError(
+                        f"Chemical name '{name}' is recognized but missing a required data ('MW, molecular weight [g/mol]'). From: {self.__class__.__name__}")
             if 'ghv' in self.target_props:
                 if Hc is None:
-                    raise ValueError("Chemical name '%s' is recognized but missing a required data (%s)." % (name, 'Hcs, heat of combustion [J/mol]'))
-
-#df = SCNProperty.build_table([i for i in range(82, 94, 1)], col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], warnings=True, model='kf')
-df = SCNProperty.build_table([i for i in range(80, 94, 1)], col='mw', output_keys=['sg', 'Tb'], warnings=True, model='ra')
-print(df.to_string())
-print('----------------------------------------------------------')
+                    raise ValueError(
+                        f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
 
 
 brazos_gas = dict([
@@ -791,7 +724,7 @@ brazos_cond = dict([
     #('Heptanes+', 0.4),
 ])
 
-ovintive_tomlin = dict([
+ovintiv_tomlin = dict([
     ('nitrogen', 6.436),
     ('carbon dioxide', 0.848),
     ('methane', 30.232),
@@ -820,11 +753,25 @@ shamrock = dict([
     ('i-pentane', 0.628),
     ('n-pentane', 0.743),
     ('Hexanes+', 0.445),
+    #('Heptanes+', 0.2),
+    #('heneicosane', 0.01),
 ])
 
 
+df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
+#df = SCNProperty.build_table([i for i in range(84, 94, 1)], col='mw', warning=True, model='kf')
+#print(df.to_string())
+print(SCNProperty(mw=90).xa)
+
+print('----------------------------------------------------------')
+
+
+# complete test scripts
+# ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': False, 'model': 'kf'})
+
+
 # Brazos Trees Gas
-#ptable = PropertyTable(brazos_gas, summary=True, warnings=True)
+#ptable = PropertyTable(brazos_gas, summary=True, warning=True)
 #ptable.update_property('Hexanes+', {'GHV_liq': 20408})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4849})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
@@ -833,31 +780,21 @@ shamrock = dict([
 
 #ptable.update_property('Hexanes+', {'liquid sg': 0.65})
 
-# Brazos Trees Gas
-#ptable = PropertyTable(ovintive_tomlin, summary=True, warnings=True)
+# ovintiv_tomlin
+#ptable = PropertyTable(ovintiv_tomlin, summary=True, warning=True)
+#ptable = PropertyTable(ovintiv_tomlin, summary=False, warning=True)
 
 # Shamrock
-ptable = PropertyTable(shamrock, summary=True, warning=True)
+
+ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
 #ptable.update_property('Hexanes+', {'GHV_liq': 20677})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4774})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
 #ptable.update_property('Hexanes+', {'gas sg': 3.0180})
-ptable.update_property('Hexanes+', {'mw': 87.665})
+#ptable.update_property('Hexanes+', {'mw': 87.665})  # 87.665
+ptable.update_total({'mw': 23})
 
-
-
-temp = {
-    'nitrogen': 0.09062557328930472,
-    'carbon dioxide': 0.0034305631994129516,
-    'methane': 0.6544762428912125,
-    'ethane': 0.11270409099247844,
-    'propane': 0.08390203632361035,
-    'isobutane': 0.009035039442304164,
-    'n-butane': 0.029168959823885524,
-    'i-pentane': 0.005760410933773619,
-    'n-pentane': 0.0068152632544487245,
-    'Hexanes+': 0.004081819849568791
-}
+# ptable.update_property('Heptanes+', {'mw': 96.665})  # 87.665
 
 #ptable.update_property('Hexanes+', {'mw': 87.665, 'liquid sg': 0.6933})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.6933, 'mw': 87.665})
@@ -878,8 +815,10 @@ temp = {
 #ptable.update_property_total({'MW': 81.5})
 
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
-#print(ptable.table.to_string())
+print(ptable.table.to_string())
 
 # ToDo: calculate mass fraction even when values are not updated, like when no plus fractions are provided. Since everything else is known, it should calculate
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1
+
+# Todo: fix the PropertyTable's red text warnings. Make sure it has no ranges, cuz that should all come from SCNProperty
