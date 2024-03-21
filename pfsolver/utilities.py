@@ -1,4 +1,6 @@
 import config
+import warnings
+from customExceptions import SCNPropertyWarning
 
 
 CONSTANTS = config.constants
@@ -34,3 +36,15 @@ def ideal_gas_molar_volume():
     :return: ideal gas molar volume in a standard condition (m^3/mol)
     """
     return CONSTANTS['R'] * CONSTANTS['T_STANDARD'] / CONSTANTS['P_STANDARD']
+
+
+def check_ranges(target_dict, ref_dict, class_name=None, warning_obj=None):
+    for target_key, target_val in target_dict.items():
+        min_val = ref_dict[target_key][0]
+        max_val = ref_dict[target_key][1]
+        if target_val is not None and not (min_val <= target_val <= max_val):
+            msg = f"{target_key} value {target_val} is out of recommended working range [{min_val}, {max_val}]. Set warning=False to suppress this warning."
+            if class_name is not None:
+                msg += f" From: {class_name}"
+            warnings.warn(msg, warning_obj)
+

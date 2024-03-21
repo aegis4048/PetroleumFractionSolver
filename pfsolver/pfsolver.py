@@ -10,6 +10,7 @@ import config
 import inspect
 import math
 from utilities import normalize_composition, ideal_gas_molar_volume
+import utilities
 import copy
 
 
@@ -35,6 +36,7 @@ class SCNProperty(object):
             Tb=None,  # Tb in Rankine
             PNA=True,
             model='kf',
+            init_guess=None,
             subtract='naphthenes',
             warning=True
     ):
@@ -50,6 +52,22 @@ class SCNProperty(object):
             'subtract': ['naphthenes', 'paraffins', 'aromatics'],
         }
         self._validate_kwargs()
+
+        default_guess = {'mw': 100, 'sg': 0.8, 'Tb': 600}
+        self.init_guess = self._validate_return_kwargs_dict(default_guess, init_guess)
+
+        if self.model == 'kf':
+            self._range_warnings = {
+                'sg': (0.685, 0.937),
+                'mw': (84, 626),
+                'Tb': (606.7, 1486.7)
+            }
+        else:
+            self._range_warnings = {
+                'sg': (0.690, 0.947),
+                'mw': (82, 698),
+                'Tb': (606.6, 1531.8)
+            }
 
         # Tb in rankine
         self.sg = None
@@ -94,21 +112,14 @@ class SCNProperty(object):
         self._attributes = {key: float(f"{value:.{n}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
         self._round_attributes(n)
 
-        if model == 'kf':
-            self._range_warnings = {
-                'sg': (0.685, 0.937),
-                'mw': (84, 626),
-                'Tb': (606.7, 1486.7)
-            }
-        else:
-            self._range_warnings = {
-                'sg': (0.690, 0.947),
-                'mw': (82, 698),
-                'Tb': (606.6, 1531.8)
-            }
-
         if self.warning:
-            self._check_ranges()
+            properties_to_check = {attr: getattr(self, attr) for attr in list(self._range_warnings.keys())}
+            utilities.check_ranges(
+                target_dict=properties_to_check,
+                ref_dict=self._range_warnings,
+                class_name=self.__class__.__name__,
+                warning_obj=SCNPropertyWarning
+            )
 
     def _validate_kwargs(self):
         for model_name, model_choices in self.kwargs_options.items():
@@ -118,13 +129,17 @@ class SCNProperty(object):
                 raise ValueError(
                     f"Invalid {model_name}: {user_choice_repr}. Valid options: {model_choices}. From: {self.__class__.__name__}")
 
-    def _check_ranges(self):
-        for attr, (min_val, max_val) in self._range_warnings.items():
-            value = getattr(self, attr, None)
-            if value is not None and not (min_val <= value <= max_val):
-                warnings.warn(
-                    f"{attr} value {value} is out of working range [{min_val}, {max_val}]. Set warning=False to suppress this warning. From: {self.__class__.__name__}",
-                    SCNPropertyWarning)
+    def _validate_return_kwargs_dict(self, default_guess, init_guess):
+        if init_guess is not None:
+            if not isinstance(init_guess, dict):
+                raise ValueError(f"init_guess must be a dictionary. From: {self.__class__.__name__}")
+            invalid_keys = [key for key in init_guess if key not in default_guess]
+            if invalid_keys:
+                raise ValueError(f"Invalid keys in init_guess: {invalid_keys}. Valid options: {list(default_guess.keys())}.")
+            init_guess = {**default_guess, **init_guess}  # Merge default with user-provided, prioritizing user values
+        else:
+            init_guess = default_guess
+        return init_guess
 
     @classmethod
     def build_table(cls, arr, col='mw', output_keys=None, **kwargs):
@@ -191,26 +206,45 @@ class SCNProperty(object):
             setattr(self, key, value)
 
     def resolve_dependencies(self):
-        resolved = set([attr for attr, value in self._attributes.items() if value is not None])
+        resolved_vars_keys = set([attr for attr, value in self._attributes.items() if value is not None])
+        resolved_vars_dict = {key: self._attributes[key] for key in resolved_vars_keys if key in self._attributes}
+        resolved_vars_values = list(resolved_vars_dict.values())
 
         # Resolve other dependencies
-        while len(resolved) < len(self._attributes):
+        while len(resolved_vars_keys) < len(self._attributes):
             resolved_this_iteration = False
             for correlation_func, variables in self._correlations.items():
 
-                unresolved_vars = [var for var in variables if var not in resolved]
+                unresolved_vars = [var for var in variables if var not in resolved_vars_keys]
                 if len(unresolved_vars) == 1:
                     unresolved_var = unresolved_vars[0]
-                    resolved_vars = [self._attributes[var] for var in variables if var in resolved]
 
-                    self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars)), x0=self.get_initial_guess(unresolved_var))
-                    resolved.add(unresolved_var)
+                    # warning messages need to be printed here prior to non-linear solver, as the solver can trigger
+                    # runtime Error and failing to run _check_ranges in the end __init__.
+                    if self.warning:
+                        utilities.check_ranges(target_dict=resolved_vars_dict,
+                                               ref_dict=self._range_warnings,
+                                               class_name=self.__class__.__name__,
+                                               warning_obj=SCNPropertyWarning)
+
+                    try:
+                        self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_initial_guess(unresolved_var))
+                    except RuntimeError as e:
+                        custom_message = f"{e}\nCustomMessage: Failed to solve with newton's method for " \
+                                         f"unresolved_var: {unresolved_var}, " \
+                                         f"using correlation_func: {correlation_func.__name__}, " \
+                                         f"initial guess for unresolved_var: {self._get_initial_guess(unresolved_var)}, " \
+                                         f"resolved_vars_dict: {resolved_vars_dict}."
+                        raise RuntimeError(custom_message) from e
+
+                    #self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_initial_guess(unresolved_var))
+                    resolved_vars_keys.add(unresolved_var)
                     resolved_this_iteration = True
 
             if not resolved_this_iteration:
                 break
 
-    def prepare_args(self, correlation_func, x, resolved_vars):
+    def prepare_args(self, correlation_func, x, resolved_vars_values):
         arg_order = self._correlations[correlation_func]
         args = []
         for arg in arg_order:
@@ -220,9 +254,8 @@ class SCNProperty(object):
                 args.append(x)
         return args
 
-    def get_initial_guess(self, variable):
-        initial_guesses = {'mw': 100, 'sg': 0.8, 'Tb': 600}
-        return initial_guesses.get(variable, 1.0)
+    def _get_initial_guess(self, variable):
+        return self.init_guess.get(variable, None)  # return None if key not found, default
 
 
 class PropertyTable(object):
@@ -317,40 +350,6 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def calc_summary(self):
-
-        summary_row = {}
-        for column, operation in self.summary_stats_method.items():
-
-            # If any NaN values are present in the column, summary stats can't be calculated
-            if pd.isnull(self.table_[column]).any():
-                summary_row[column] = None
-                continue
-
-            if operation == 'sum':
-                summary_row[column] = self.table_[column].sum()
-            elif operation == 'mean':
-                summary_row[column] = self.table_[column].mean()
-            elif operation == 'mole_frac_mean':
-                if pd.isnull(self.table_['Mole Fraction']).any():
-                    summary_row[column] = None
-                else:
-                    weighted_sum = (self.table_['Mole Fraction'] * self.table_[column]).sum()
-                    summary_row[column] = weighted_sum / self.table_['Mole Fraction'].sum()
-            elif operation == 'mass_frac_mean':
-                if pd.isnull(self.table_['Mass Fraction']).any():
-                    summary_row[column] = None
-                else:
-                    weighted_sum = (self.table_['Mass Fraction'] * self.table_[column]).sum()
-                    summary_row[column] = weighted_sum / self.table_['Mass Fraction'].sum()
-            else:
-                summary_row[column] = None
-
-        summary_row['Name'] = 'Total'
-        summary_df = pd.DataFrame([summary_row], index=[self.n_fraction + self.n_pure])
-
-        return summary_df
-
     def update_total(self, props_dict):
 
         # check if summary is true
@@ -359,9 +358,36 @@ class PropertyTable(object):
 
         # code to update column value of table_summary with chemical_name as column name. table_summary is always a 1 row df.
         for key, value in props_dict.items():
-            print(key)
-            key = self._map_input_to_key(key)
-            self.table_summary[key] = value
+            column = self._map_input_to_key(key)
+            self.table_summary[column] = value
+
+            operation = self.summary_stats_method[column]
+            unknowns = self.table_[column][self.table_[column].isna()]
+
+            if len(unknowns) > 1:
+                raise ValueError(f"More than one unknown value found in column '{column}'. From: {self.__class__.__name__}")
+            else:
+                target_idx = unknowns.index[0]
+            knowns = self.table_[column].drop(target_idx)
+
+            if operation == 'sum':
+                solution = value - knowns.sum()
+            elif operation == 'mole_frac_mean':
+                mole_frac_knowns = self.table_['Mole Fraction'].drop(target_idx)
+                weighted_sum = (mole_frac_knowns * knowns).sum()
+                target_mole_frac = self.table_.loc[target_idx, 'Mole Fraction']
+                solution = (value - weighted_sum) / target_mole_frac
+            elif operation == 'mass_frac_mean':
+                weighted_sum = (self.table_['Mass Fraction'] * knowns).sum()
+                solution = (value - weighted_sum) / self.table_.loc[target_idx, 'Mass Fraction']
+            elif operation is None:
+                solution = None
+            else:
+                raise ValueError(f"Invalid operation: '{operation}'. Valid options are 'sum', 'mean', 'mole_frac_mean', 'mass_frac_mean'. From: {self.__class__.__name__}")
+
+            self.table_.loc[target_idx, column] = solution
+            # Todo: this section probably needs 3 waves of _internal_property()
+
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
@@ -392,7 +418,6 @@ class PropertyTable(object):
 
     def _internal_update_property(self):
 
-        self.table_summary = self.calc_summary()  # Update Total row first
         rules = {
             'MW': {
                 'weighted_avg': {
@@ -404,7 +429,7 @@ class PropertyTable(object):
                 'correlation': {
                     'required_columns': [['SG_gas'], ['SG_liq'], ['GHV_gas']],
                     'total_required': [[None], [None], [None]],
-                    'required_others': [[None], [None], [None]],
+                    'required_others': [[None], [None], [None], [None]],
                     'funcs': [
                         self._calc_mw_from_sg_gas,
                         self._calc_mw_from_sg_liq,
@@ -483,7 +508,6 @@ class PropertyTable(object):
                 },
             }
         }
-
         for property, methods in rules.items():
             for method_name, method_details in methods.items():
                 # Check if the 'weighted_avg' method can be computed or not, skip to 'correlation' if not
@@ -495,6 +519,37 @@ class PropertyTable(object):
                     self._handle_correlation_method(property, method_details)
 
         self._handle_summary()
+
+    def calc_summary(self):
+
+        summary_row = {}
+        for column, operation in self.summary_stats_method.items():
+
+            # If any NaN values are present in the column, summary stats can't be calculated
+            if pd.isnull(self.table_[column]).any():
+                summary_row[column] = None
+                continue
+
+            summary_row[column] = None
+            if operation == 'sum':
+                summary_row[column] = self.table_[column].sum()
+            elif operation == 'mole_frac_mean':
+                if not pd.isnull(self.table_['Mole Fraction']).any():
+                    weighted_sum = (self.table_['Mole Fraction'] * self.table_[column]).sum()
+                    summary_row[column] = weighted_sum / self.table_['Mole Fraction'].sum()
+            elif operation == 'mass_frac_mean':
+                if not pd.isnull(self.table_['Mass Fraction']).any():
+                    weighted_sum = (self.table_['Mass Fraction'] * self.table_[column]).sum()
+                    summary_row[column] = weighted_sum / self.table_['Mass Fraction'].sum()
+            elif operation is None:
+                pass
+            else:
+                raise ValueError(f"Invalid operation: '{operation}'. Valid options are 'sum', 'mean', 'mole_frac_mean', 'mass_frac_mean'. From: {self.__class__.__name__}")
+
+        summary_row['Name'] = 'Total'
+        summary_df = pd.DataFrame([summary_row], index=[self.n_fraction + self.n_pure])
+
+        return summary_df
 
     def _handle_summary(self):
         if self.summary:
@@ -521,8 +576,11 @@ class PropertyTable(object):
                     if all(method_details['required_others'][i]):
                         required_others_satisfied = True  # implement actual function later
 
+                    #print(property, ':', required_columns_satisfied, total_required_satisfied, required_others_satisfied)
+
                     if all([required_columns_satisfied, total_required_satisfied, required_others_satisfied]):
 
+                        #print('all passed---------------------')
                         args = []
                         if all(method_details['required_columns'][i]):
                             args = [row[col] for col in method_details['required_columns'][i]]  # this returns KeyError: None for list containing None, so all() method is used to avoid this error.
@@ -751,7 +809,7 @@ shamrock = dict([
     ('isobutane', 0.985),
     ('n-butane', 3.180),
     ('i-pentane', 0.628),
-    ('n-pentane', 0.743),
+    ('n-pentane', 0.743),  # 0.743
     ('Hexanes+', 0.445),
     #('Heptanes+', 0.2),
     #('heneicosane', 0.01),
@@ -761,7 +819,7 @@ shamrock = dict([
 df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
 #df = SCNProperty.build_table([i for i in range(84, 94, 1)], col='mw', warning=True, model='kf')
 #print(df.to_string())
-print(SCNProperty(mw=90).xa)
+#print(SCNProperty(mw=90).xa)
 
 print('----------------------------------------------------------')
 
@@ -771,28 +829,52 @@ print('----------------------------------------------------------')
 
 
 # Brazos Trees Gas
-#ptable = PropertyTable(brazos_gas, summary=True, warning=True)
+ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
 #ptable.update_property('Hexanes+', {'GHV_liq': 20408})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4849})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
 #ptable.update_property('Hexanes+', {'gas sg': 3.1228})
-#ptable.update_property('Hexanes+', {'mw': 90.161})
-
+#ptable.update_property('Hexanes+', {'gas sg': 3.396934})
+#ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
 #ptable.update_property('Hexanes+', {'liquid sg': 0.65})
+
+#ptable.update_total({'mw': 23.251}) #23.251, 23.323927
+#ptable.update_total({'mw': 23.323927}) #23.251, 23.323927
+ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
+#ptable.update_total({'liquid sg': 0.358661})
+#ptable.update_total({'gas sg': 0.8053})  # computed from C6+ mw=90.161 is 0.802769
+#ptable.update_total({'GHV_gas': 1325.1})
+#ptable.update_total({'mw': 23.251, 'GHV_liq': 21546})
+
+
+# Todo: sg_liq correlation with total is unstable - this is due to sg_liq being way too big
+# Todo: implement multiple inputs at one time scenario
+# Todo: warnings are not triggered when runtime error occurs from failed to converge, ptable.update_total({'liquid sg': 0.3740}) for brazos sample
+
 
 # ovintiv_tomlin
 #ptable = PropertyTable(ovintiv_tomlin, summary=True, warning=True)
 #ptable = PropertyTable(ovintiv_tomlin, summary=False, warning=True)
 
 # Shamrock
+# notes: make a note that total method is not recommended. It's extremely sensitive to error in inputs for all properties.
 
-ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
+
+#ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
 #ptable.update_property('Hexanes+', {'GHV_liq': 20677})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4774})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
 #ptable.update_property('Hexanes+', {'gas sg': 3.0180})
 #ptable.update_property('Hexanes+', {'mw': 87.665})  # 87.665
-ptable.update_total({'mw': 23})
+#ptable.update_total({'mw': 23.380})
+#ptable.update_total({'liquid sg': 0.3694})
+#ptable.update_total({'gas sg': 0.8054})
+#ptable.update_total({'GHV_gas': 1380})
+#ptable.update_total({'mw': 23.380, 'GHV_liq': 22402})
+
+# MW is required for GHV_liq calculation, this is a Todo
+
+#ptable.update_total({'GHV_liq': 22402, 'mw': 23.380})
 
 # ptable.update_property('Heptanes+', {'mw': 96.665})  # 87.665
 
@@ -822,3 +904,4 @@ print(ptable.table.to_string())
 # Todo: Do StateCordell, which explicitly shows 6:3:1
 
 # Todo: fix the PropertyTable's red text warnings. Make sure it has no ranges, cuz that should all come from SCNProperty
+

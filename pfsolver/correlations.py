@@ -151,7 +151,6 @@ def mw_sg_gas(mw, sg_gas):
     notes: valid for all gas
     """
     sg_air = config.constants['MW_AIR']
-
     return mw / sg_air - sg_gas
 
 
