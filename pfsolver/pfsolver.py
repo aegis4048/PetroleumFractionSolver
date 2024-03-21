@@ -121,6 +121,8 @@ class SCNProperty(object):
                 warning_obj=SCNPropertyWarning
             )
 
+
+
     def _validate_kwargs(self):
         for model_name, model_choices in self.kwargs_options.items():
             user_choice = getattr(self, model_name)
@@ -280,7 +282,8 @@ class PropertyTable(object):
                 comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
                 warnings.warn(
                     f"From: {self.__class__.__name__}: The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
-                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n")
+                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n"
+                )
 
         self.df_GPA = pd.read_pickle("GPA 2145-16 Compound Properties Table - English.pkl")
         self.names = list(self.comp_dict.keys())
@@ -315,6 +318,9 @@ class PropertyTable(object):
             'SG_gas': self.sgs_gas_pure.tolist() + [None] * self.n_fraction,
             'SG_liq': self.sgs_liq_pure.tolist() + [None] * self.n_fraction,
         })
+        self.table_ = self.table_.set_index('Name').reindex(self.names).reset_index()  # reorder the table to match the input order for fractions
+
+        self.fraction_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name) if is_fraction(item)}
 
         self.column_mapping = {
             'Name': ['name', 'compound', 'chemical'],
@@ -350,7 +356,7 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def update_total(self, props_dict):
+    def update_total(self, props_dict, target_compound=None):
 
         # check if summary is true
         if not self.summary:
@@ -366,8 +372,14 @@ class PropertyTable(object):
 
             if len(unknowns) > 1:
                 raise ValueError(f"More than one unknown value found in column '{column}'. From: {self.__class__.__name__}")
+            elif len(unknowns) == 0:
+                if target_compound is None:
+                    raise ValueError(f"target_compound to solve for must be provided when there are more than 1 fractions. Input one of the following: {self.names_fraction}. From: {self.__class__.__name__}")
+                else:
+                    target_idx = self.fraction_indices_dict[target_compound]
             else:
-                target_idx = unknowns.index[0]
+                target_idx = unknowns.index[0]  # len(unknowns) == 1
+
             knowns = self.table_[column].drop(target_idx)
 
             if operation == 'sum':
@@ -377,6 +389,7 @@ class PropertyTable(object):
                 weighted_sum = (mole_frac_knowns * knowns).sum()
                 target_mole_frac = self.table_.loc[target_idx, 'Mole Fraction']
                 solution = (value - weighted_sum) / target_mole_frac
+                print(solution)
             elif operation == 'mass_frac_mean':
                 weighted_sum = (self.table_['Mass Fraction'] * knowns).sum()
                 solution = (value - weighted_sum) / self.table_.loc[target_idx, 'Mass Fraction']
@@ -386,8 +399,9 @@ class PropertyTable(object):
                 raise ValueError(f"Invalid operation: '{operation}'. Valid options are 'sum', 'mean', 'mole_frac_mean', 'mass_frac_mean'. From: {self.__class__.__name__}")
 
             self.table_.loc[target_idx, column] = solution
-            # Todo: this section probably needs 3 waves of _internal_property()
 
+            # Todo: this section probably needs 3 waves of _internal_property()
+            # Todo:
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
@@ -765,7 +779,7 @@ brazos_gas = dict([
     ('i-pentane', 0.578),
     ('n-pentane', 0.597),
     ('Hexanes+', 0.889),
-    #('Heptanes+', 0.4),
+    ('Heptanes+', 0.4),
 ])
 
 brazos_cond = dict([
@@ -835,22 +849,22 @@ ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwarg
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
 #ptable.update_property('Hexanes+', {'gas sg': 3.1228})
 #ptable.update_property('Hexanes+', {'gas sg': 3.396934})
-#ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
+ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
 #ptable.update_property('Hexanes+', {'liquid sg': 0.65})
+ptable.update_property('Heptanes+', {'mw': 32.24})
 
-#ptable.update_total({'mw': 23.251}) #23.251, 23.323927
+#ptable.update_total({'mw': 25.251}, target_compound='Hexanes+') #23.251, 23.323927
+#ptable.update_total({'mw': 25.251}, target_compound='Heptanes+')
 #ptable.update_total({'mw': 23.323927}) #23.251, 23.323927
-ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
+#ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
 #ptable.update_total({'liquid sg': 0.358661})
 #ptable.update_total({'gas sg': 0.8053})  # computed from C6+ mw=90.161 is 0.802769
 #ptable.update_total({'GHV_gas': 1325.1})
 #ptable.update_total({'mw': 23.251, 'GHV_liq': 21546})
+#ptable.update_total({'GHV_liq': 21546, 'mw': 23.251})
 
 
-# Todo: sg_liq correlation with total is unstable - this is due to sg_liq being way too big
 # Todo: implement multiple inputs at one time scenario
-# Todo: warnings are not triggered when runtime error occurs from failed to converge, ptable.update_total({'liquid sg': 0.3740}) for brazos sample
-
 
 # ovintiv_tomlin
 #ptable = PropertyTable(ovintiv_tomlin, summary=True, warning=True)
