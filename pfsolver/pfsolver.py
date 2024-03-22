@@ -309,18 +309,20 @@ class PropertyTable(object):
         # table without summary statistics line
         self.table_ = pd.DataFrame.from_dict({
             'Name': self.names_pure + self.names_fraction,
-            'CAS': self.constants_pure.CASs + [None] * self.n_fraction,
+            'CAS': self.constants_pure.CASs + [np.nan] * self.n_fraction,
             'Mole Fraction': self.zs_pure + self.zs_fraction,
-            'MW': self.mws_pure.tolist() + [None] * self.n_fraction,
-            'Mass Fraction': [None] * len(self.names),
-            'GHV_gas': self.ghvs_gas_pure.tolist() + [None] * self.n_fraction,
-            'GHV_liq': self.ghvs_liq_pure.tolist() + [None] * self.n_fraction,
-            'SG_gas': self.sgs_gas_pure.tolist() + [None] * self.n_fraction,
-            'SG_liq': self.sgs_liq_pure.tolist() + [None] * self.n_fraction,
+            'MW': self.mws_pure.tolist() + [np.nan] * self.n_fraction,
+            'Mass Fraction': [np.nan] * len(self.names),
+            'GHV_gas': self.ghvs_gas_pure.tolist() + [np.nan] * self.n_fraction,
+            'GHV_liq': self.ghvs_liq_pure.tolist() + [np.nan] * self.n_fraction,
+            'SG_gas': self.sgs_gas_pure.tolist() + [np.nan] * self.n_fraction,
+            'SG_liq': self.sgs_liq_pure.tolist() + [np.nan] * self.n_fraction,
         })
         self.table_ = self.table_.set_index('Name').reindex(self.names).reset_index()  # reorder the table to match the input order for fractions
 
-        self.fraction_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name) if is_fraction(item)}
+        #self.fraction_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name) if is_fraction(item)}
+        #self.pure_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name) if not is_fraction(item)}
+        self.compound_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name)}
 
         self.column_mapping = {
             'Name': ['name', 'compound', 'chemical'],
@@ -331,9 +333,8 @@ class PropertyTable(object):
             'GHV_gas': ['ghv_gas', 'ghv gas', 'gas ghv', 'vapor ghv', 'ghv_vapor', 'ghv vapor'],
             'GHV_liq': ['ghv_liq', 'ghv liq', 'liq ghv', 'liquid ghv', 'ghv_liquid', 'ghv liquid'],
             'SG_gas': ['sg_gas', 'sg gas', 'gas sg', 'vapor sg', 'sg_vapor', 'sg vapor'],
-            'SG_liq': ['sg_liq', 'sg liq', 'liq sg', 'liquid sg', 'sg_liquid', 'sg liquid']
+            'SG_liq': ['sg_liq', 'sg liq', 'liq sg', 'liquid sg', 'sg_liquid', 'sg liquid'],
         }
-
         self.summary_stats_method = {
             "Name": None,
             "CAS": None,
@@ -356,27 +357,34 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def update_total(self, props_dict, target_compound=None):
+    def update_total(self, props_dict, target_compound=None, reset=True):
 
         # check if summary is true
         if not self.summary:
             raise ValueError(f"Summary is set to False. Set summary=True to use this method. From: {self.__class__.__name__}")
 
+        excluded_cols = ['Name', 'CAS', 'Mole Fraction']
         # code to update column value of table_summary with chemical_name as column name. table_summary is always a 1 row df.
         for key, value in props_dict.items():
             column = self._map_input_to_key(key)
+            excluded_cols.append(column)
             self.table_summary[column] = value
 
             operation = self.summary_stats_method[column]
             unknowns = self.table_[column][self.table_[column].isna()]
 
+            # get index of the target plus fraction to solve for.
             if len(unknowns) > 1:
                 raise ValueError(f"More than one unknown value found in column '{column}'. From: {self.__class__.__name__}")
             elif len(unknowns) == 0:
                 if target_compound is None:
-                    raise ValueError(f"target_compound to solve for must be provided when there are more than 1 fractions. Input one of the following: {self.names_fraction}. From: {self.__class__.__name__}")
+                    if len(self.names_fraction) != 1:
+                        raise ValueError(f"target_compound to solve for must be provided when there are more than 1 fractions. Input one of the following: {self.names_fraction}. From: {self.__class__.__name__}")
+                    else:
+                        target_compound = self.names_fraction[0]
+                        target_idx = self.compound_indices_dict[target_compound]
                 else:
-                    target_idx = self.fraction_indices_dict[target_compound]
+                    target_idx = self.compound_indices_dict[target_compound]
             else:
                 target_idx = unknowns.index[0]  # len(unknowns) == 1
 
@@ -389,7 +397,6 @@ class PropertyTable(object):
                 weighted_sum = (mole_frac_knowns * knowns).sum()
                 target_mole_frac = self.table_.loc[target_idx, 'Mole Fraction']
                 solution = (value - weighted_sum) / target_mole_frac
-                print(solution)
             elif operation == 'mass_frac_mean':
                 weighted_sum = (self.table_['Mass Fraction'] * knowns).sum()
                 solution = (value - weighted_sum) / self.table_.loc[target_idx, 'Mass Fraction']
@@ -400,8 +407,9 @@ class PropertyTable(object):
 
             self.table_.loc[target_idx, column] = solution
 
-            # Todo: this section probably needs 3 waves of _internal_property()
-            # Todo:
+        if reset is True:
+            # _internal_update_property() triggers calculations only on cells with nan values
+            self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
@@ -409,15 +417,27 @@ class PropertyTable(object):
         self._internal_update_property()
         self._internal_update_property()
 
+        # code to check if self.table.loc[max(self.compound_indices_dict.values()) + 1, column] is np.nan
+        if pd.isna(self.table.loc[max(self.compound_indices_dict.values()) + 1, column]):
+            self.table.loc[max(self.compound_indices_dict.values()) + 1, column] = value
+            print('forced')
+
     # update directly from the user input
-    def update_property(self, name, props_dict):
+    def update_property(self, name, props_dict, reset=True):
         self._validate_chemical_name(name)
 
         row_index = self.table_[self.table_['Name'] == name].index
 
+        properties = []
         for key, value in props_dict.items():
             key = self._map_input_to_key(key)
             self.table_.loc[row_index, key] = value
+            properties.append(key)
+
+        if reset is True:
+            excluded_cols = ['Name', 'CAS', 'Mole Fraction', *properties]
+            target_idx = self.compound_indices_dict[name]
+            self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
@@ -443,7 +463,7 @@ class PropertyTable(object):
                 'correlation': {
                     'required_columns': [['SG_gas'], ['SG_liq'], ['GHV_gas']],
                     'total_required': [[None], [None], [None]],
-                    'required_others': [[None], [None], [None], [None]],
+                    'required_others': [[None], [None], [None]],
                     'funcs': [
                         self._calc_mw_from_sg_gas,
                         self._calc_mw_from_sg_liq,
@@ -779,7 +799,7 @@ brazos_gas = dict([
     ('i-pentane', 0.578),
     ('n-pentane', 0.597),
     ('Hexanes+', 0.889),
-    ('Heptanes+', 0.4),
+    #('Heptanes+', 0.4),
 ])
 
 brazos_cond = dict([
@@ -849,9 +869,9 @@ ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwarg
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
 #ptable.update_property('Hexanes+', {'gas sg': 3.1228})
 #ptable.update_property('Hexanes+', {'gas sg': 3.396934})
-ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
+#ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
 #ptable.update_property('Hexanes+', {'liquid sg': 0.65})
-ptable.update_property('Heptanes+', {'mw': 32.24})
+#ptable.update_property('Heptanes+', {'mw': 32.24})
 
 #ptable.update_total({'mw': 25.251}, target_compound='Hexanes+') #23.251, 23.323927
 #ptable.update_total({'mw': 25.251}, target_compound='Heptanes+')
@@ -859,9 +879,19 @@ ptable.update_property('Heptanes+', {'mw': 32.24})
 #ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
 #ptable.update_total({'liquid sg': 0.358661})
 #ptable.update_total({'gas sg': 0.8053})  # computed from C6+ mw=90.161 is 0.802769
+#ptable.update_total({'gas sg': 0.81}, reset=True)
+#ptable.update_total({'gas sg': 0.91}, reset=True)
+
 #ptable.update_total({'GHV_gas': 1325.1})
-#ptable.update_total({'mw': 23.251, 'GHV_liq': 21546})
-#ptable.update_total({'GHV_liq': 21546, 'mw': 23.251})
+#ptable.update_total({'GHV_liq': 51546}, reset=False)
+
+
+#ptable.update_total({'gas sg': 0.81})
+ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
+
+#ptable.update_property('Hexanes+', {'gas sg': 3.1228}, reset=True)
+
+
 
 
 # Todo: implement multiple inputs at one time scenario
@@ -913,9 +943,6 @@ ptable.update_property('Heptanes+', {'mw': 32.24})
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
 print(ptable.table.to_string())
 
-# ToDo: calculate mass fraction even when values are not updated, like when no plus fractions are provided. Since everything else is known, it should calculate
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1
-
-# Todo: fix the PropertyTable's red text warnings. Make sure it has no ranges, cuz that should all come from SCNProperty
 

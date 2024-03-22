@@ -1,6 +1,5 @@
 import config
 import warnings
-from customExceptions import SCNPropertyWarning
 
 
 CONSTANTS = config.constants
