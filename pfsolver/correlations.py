@@ -1,5 +1,5 @@
 import numpy as np
-import config
+from . import config
 
 import pint
 UREG = pint.UnitRegistry()

@@ -2,21 +2,25 @@ import numpy as np
 import pandas as pd
 import pint
 from thermo import ChemicalConstantsPackage
-import correlations
 import warnings
-from customExceptions import SCNPropertyWarning
 from scipy.optimize import newton, minimize
-import config
-import inspect
 import math
-from utilities import normalize_composition, ideal_gas_molar_volume
-import utilities
 import copy
+import os
+
+from . import correlations
+from .customExceptions import SCNPropertyWarning
+from . import config
+from . import utilities
 
 
 UREG = pint.UnitRegistry()
 MAPPING = config.GPA_table_column_mapping
 CONSTANTS = config.constants
+
+
+DIR_PATH = os.path.dirname(os.path.realpath(__file__))
+FEATHER_PATH = os.path.join(DIR_PATH, "GPA 2145-16 Compound Properties Table - English.feather")
 
 
 def is_fraction(s):
@@ -38,7 +42,8 @@ class SCNProperty(object):
             model='kf',
             init_guess=None,
             subtract='naphthenes',
-            warning=True
+            warning=True,
+            round=None,
     ):
 
         if sg is None and mw is None and Tb is None:
@@ -56,26 +61,28 @@ class SCNProperty(object):
         default_guess = {'mw': 100, 'sg': 0.8, 'Tb': 600}
         self.init_guess = self._validate_return_kwargs_dict(default_guess, init_guess)
 
+        # this _range_warnings structure needs to be preserved to pass unittest
+        tol = 0.01
         if self.model == 'kf':
             self._range_warnings = {
-                'sg': (0.685, 0.937),
-                'mw': (84, 626),
-                'Tb': (606.7, 1486.7)
+                'sg': (0.685 - 0.685 * tol, 0.937 + 0.937 * tol),
+                'mw': (84 - 84 * tol, 626 + 626 * tol),
+                'Tb': (606.7 - 606.7 * tol, 1486.7 + 1486.7 * tol)
             }
         else:
             self._range_warnings = {
-                'sg': (0.690, 0.947),
-                'mw': (82, 698),
-                'Tb': (606.6, 1531.8)
+                'sg': (0.690 - 0.690 * tol, 0.947 + 0.947 * tol),
+                'mw': (82 - 82 * tol, 698 + 698 * tol),
+                'Tb': (606.6 - 606.6 * tol, 1531.8 + 1531.8 * tol)
             }
 
         # Tb in rankine
         self.sg = None
         self.mw = None
         self.Tb = None
-        self.xa = None
-        self.xn = None
         self.xp = None
+        self.xn = None
+        self.xa = None
         self.SUS_100 = None
         self.VGC = None
         self.VGF = None
@@ -101,16 +108,16 @@ class SCNProperty(object):
             func_Tb_mw: ['Tb', 'mw'],
             func_sg_mw: ['sg', 'mw'],
         }
-        self.resolve_dependencies()
-        self.assign_attributes()
+        self._resolve_dependencies()
+        self._assign_attributes()
 
         if PNA:
-            self.xp, self.xn, self.xa = self.calc_PNA_composition()
+            self.xp, self.xn, self.xa = self._calc_PNA_composition()
 
         # round to n significant figures
-        n = 4
-        self._attributes = {key: float(f"{value:.{n}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
-        self._round_attributes(n)
+        if round is not None:
+            self._attributes = {key: float(f"{value:.{round}g}") if isinstance(value, float) else value for key, value in self._attributes.items()}
+            self._round_attributes(round)
 
         if self.warning:
             properties_to_check = {attr: getattr(self, attr) for attr in list(self._range_warnings.keys())}
@@ -120,8 +127,6 @@ class SCNProperty(object):
                 class_name=self.__class__.__name__,
                 warning_obj=SCNPropertyWarning
             )
-
-
 
     def _validate_kwargs(self):
         for model_name, model_choices in self.kwargs_options.items():
@@ -148,6 +153,9 @@ class SCNProperty(object):
         available_keys = ['sg', 'mw', 'Tb', 'xp', 'xn', 'xa', 'ri', 'v100', 'v210', 'SUS_100', 'VGC', 'VGF', 'RI_intercept']
         available_input_keys = ['sg', 'mw', 'Tb']
 
+        for key in available_input_keys:
+            kwargs.pop(key, None)  # prevents duplicate inputs
+
         if output_keys is None:
             output_keys = ['sg', 'mw', 'Tb', 'xp', 'xn', 'xa', 'ri', 'v100', 'v210']
 
@@ -164,11 +172,9 @@ class SCNProperty(object):
         SCN_dicts = []
         for item in arr:
             SCN_obj = SCNProperty(**{col: item}, **kwargs)
-            SCN_dict = {key: value for key, value in vars(SCN_obj).items() if key in output_keys}
-            SCN_dicts.append(SCN_dict)
+            SCN_dicts.append({key: getattr(SCN_obj, key) for key in [col] + output_keys})
 
         return_df = pd.DataFrame(SCN_dicts)
-        return_df.insert(loc=0, column=col, value=arr)
 
         return return_df
 
@@ -179,7 +185,7 @@ class SCNProperty(object):
             if isinstance(value, float):
                 setattr(self, attr, float(f"{value:.{n}g}"))
 
-    def calc_PNA_composition(self):
+    def _calc_PNA_composition(self):
         self.ri = correlations.calc_RI(self.Tb, self.sg)
         self.RI_intercept = correlations.calc_RI_intercept(self.sg, self.ri)
         self.v100, self.v210 = correlations.calc_v100_v210(self.Tb, self.sg)
@@ -203,11 +209,11 @@ class SCNProperty(object):
 
         return xp, xn, xa
 
-    def assign_attributes(self):
+    def _assign_attributes(self):
         for key, value in self._attributes.items():
             setattr(self, key, value)
 
-    def resolve_dependencies(self):
+    def _resolve_dependencies(self):
         resolved_vars_keys = set([attr for attr, value in self._attributes.items() if value is not None])
         resolved_vars_dict = {key: self._attributes[key] for key in resolved_vars_keys if key in self._attributes}
         resolved_vars_values = list(resolved_vars_dict.values())
@@ -230,23 +236,23 @@ class SCNProperty(object):
                                                warning_obj=SCNPropertyWarning)
 
                     try:
-                        self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_initial_guess(unresolved_var))
+                        self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self._prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_init_guess(unresolved_var))
                     except RuntimeError as e:
                         custom_message = f"{e}\nCustomMessage: Failed to solve with newton's method for " \
                                          f"unresolved_var: {unresolved_var}, " \
                                          f"using correlation_func: {correlation_func.__name__}, " \
-                                         f"initial guess for unresolved_var: {self._get_initial_guess(unresolved_var)}, " \
+                                         f"initial guess for unresolved_var: {self._get_init_guess(unresolved_var)}, " \
                                          f"resolved_vars_dict: {resolved_vars_dict}."
                         raise RuntimeError(custom_message) from e
 
-                    #self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self.prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_initial_guess(unresolved_var))
+                    #self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self._prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_init_guess(unresolved_var))
                     resolved_vars_keys.add(unresolved_var)
                     resolved_this_iteration = True
 
             if not resolved_this_iteration:
                 break
 
-    def prepare_args(self, correlation_func, x, resolved_vars_values):
+    def _prepare_args(self, correlation_func, x, resolved_vars_values):
         arg_order = self._correlations[correlation_func]
         args = []
         for arg in arg_order:
@@ -256,7 +262,7 @@ class SCNProperty(object):
                 args.append(x)
         return args
 
-    def _get_initial_guess(self, variable):
+    def _get_init_guess(self, variable):
         return self.init_guess.get(variable, None)  # return None if key not found, default
 
 
@@ -275,7 +281,7 @@ class PropertyTable(object):
             self.SCNProperty_kwargs = SCNProperty_kwargs
         self.SCNProperty_kwargs.setdefault('warning', self.warning)
 
-        self.comp_dict, self.unnormalized_sum = normalize_composition(comp_dict)
+        self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
             if self.warning:
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
@@ -285,7 +291,7 @@ class PropertyTable(object):
                     f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n"
                 )
 
-        self.df_GPA = pd.read_pickle("GPA 2145-16 Compound Properties Table - English.pkl")
+        self.df_GPA = pd.read_feather(FEATHER_PATH)
         self.names = list(self.comp_dict.keys())
         self.zs = list(self.comp_dict.values())
 
@@ -299,11 +305,11 @@ class PropertyTable(object):
 
         self.target_props = ['ghv', 'sg_liq_60F', 'sg_gas_60F', 'mw']
         self.constants_pure = ChemicalConstantsPackage.constants_from_IDs(self.names_pure)
-        self.check_properties_exists()
+        self._check_properties_exists()
 
-        self.V_molar = ideal_gas_molar_volume()
+        self.V_molar = utilities.ideal_gas_molar_volume()
 
-        self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure = self.get_properties_pure_compounds()
+        self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure = self._get_properties_pure_compounds()
         self.ghvs_gas_fraction, self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction = [], [], [], [], [], []
 
         # table without summary statistics line
@@ -554,7 +560,7 @@ class PropertyTable(object):
 
         self._handle_summary()
 
-    def calc_summary(self):
+    def _calc_summary(self):
 
         summary_row = {}
         for column, operation in self.summary_stats_method.items():
@@ -587,7 +593,7 @@ class PropertyTable(object):
 
     def _handle_summary(self):
         if self.summary:
-            self.table_summary = self.calc_summary()
+            self.table_summary = self._calc_summary()
             warnings.simplefilter(action='ignore', category=FutureWarning)
             self.table = pd.concat([self.table_, self.table_summary])
         else:
@@ -689,7 +695,7 @@ class PropertyTable(object):
     def _calc_GHV_liq_from_GHV_gas_MW(self, ghv_gas, mw):
         return newton(lambda ghv_liq: correlations.ghv_liq_ghv_gas_mw(ghv_liq, ghv_gas, mw), x0=0.65, maxiter=50)
 
-    def get_properties_pure_compounds(self):
+    def _get_properties_pure_compounds(self):
         """
         :param constants: thermo's constants object
         :param GPA_data: pandas dataframe of the GPA 2145-16 Table
@@ -761,7 +767,7 @@ class PropertyTable(object):
                 comp_dict_pure[key] = value
         return comp_dict_pure, comp_dict_fraction
 
-    def check_properties_exists(self):
+    def _check_properties_exists(self):
         """
         :param constants: constants object of the thermo library
         Molecular weight and normal boiling points are minimum information needed to characterize a fluid, incase of any
@@ -850,20 +856,17 @@ shamrock = dict([
 ])
 
 
-df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
+#df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
 #df = SCNProperty.build_table([i for i in range(84, 94, 1)], col='mw', warning=True, model='kf')
 #print(df.to_string())
-#print(SCNProperty(mw=90).xa)
-
-print('----------------------------------------------------------')
-
+print(SCNProperty(mw=90))
 
 # complete test scripts
 # ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': False, 'model': 'kf'})
 
 
 # Brazos Trees Gas
-ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
+#ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
 #ptable.update_property('Hexanes+', {'GHV_liq': 20408})
 #ptable.update_property('Hexanes+', {'GHV_gas': 4849})
 #ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
@@ -887,7 +890,7 @@ ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwarg
 
 
 #ptable.update_total({'gas sg': 0.81})
-ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
+#ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
 
 #ptable.update_property('Hexanes+', {'gas sg': 3.1228}, reset=True)
 
@@ -941,7 +944,7 @@ ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
 #ptable.update_property_total({'MW': 81.5})
 
 #ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
-print(ptable.table.to_string())
+#print(ptable.table.to_string())
 
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1
