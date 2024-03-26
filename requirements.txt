@@ -1,1 +1,7 @@
-numpy>=1.22
+numpy
+thermo
+pint
+scipy
+numpy
+pandas
+pyarrow

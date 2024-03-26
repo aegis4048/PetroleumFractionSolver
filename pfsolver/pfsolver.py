@@ -7,6 +7,7 @@ from scipy.optimize import newton, minimize
 import math
 import copy
 import os
+import inspect
 
 from . import correlations
 from .customExceptions import SCNPropertyWarning
@@ -38,7 +39,6 @@ class SCNProperty(object):
             sg=None,
             mw=None,
             Tb=None,  # Tb in Rankine
-            PNA=True,
             model='kf',
             init_guess=None,
             subtract='naphthenes',
@@ -111,8 +111,7 @@ class SCNProperty(object):
         self._resolve_dependencies()
         self._assign_attributes()
 
-        if PNA:
-            self.xp, self.xn, self.xa = self._calc_PNA_composition()
+        self.xp, self.xn, self.xa = self._calc_PNA_composition()
 
         # round to n significant figures
         if round is not None:
@@ -268,7 +267,7 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=False, warning=True, SCNProperty_kwargs=None):
+    def __init__(self, comp_dict, summary=True, warning=True, SCNProperty_kwargs=None):
 
         self.warning = warning
         self.warning_msgs = []
@@ -280,6 +279,7 @@ class PropertyTable(object):
         else:
             self.SCNProperty_kwargs = SCNProperty_kwargs
         self.SCNProperty_kwargs.setdefault('warning', self.warning)
+        self._validate_SCNProperty_kwargs()
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
@@ -287,8 +287,8 @@ class PropertyTable(object):
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
                 comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
                 warnings.warn(
-                    f"From: {self.__class__.__name__}: The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
-                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\n"
+                    f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
+                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\nFrom: {self.__class__.__name__}"
                 )
 
         self.df_GPA = pd.read_feather(FEATHER_PATH)
@@ -316,9 +316,9 @@ class PropertyTable(object):
         self.table_ = pd.DataFrame.from_dict({
             'Name': self.names_pure + self.names_fraction,
             'CAS': self.constants_pure.CASs + [np.nan] * self.n_fraction,
-            'Mole Fraction': self.zs_pure + self.zs_fraction,
+            'Mole_Fraction': self.zs_pure + self.zs_fraction,
             'MW': self.mws_pure.tolist() + [np.nan] * self.n_fraction,
-            'Mass Fraction': [np.nan] * len(self.names),
+            'Mass_Fraction': [np.nan] * len(self.names),
             'GHV_gas': self.ghvs_gas_pure.tolist() + [np.nan] * self.n_fraction,
             'GHV_liq': self.ghvs_liq_pure.tolist() + [np.nan] * self.n_fraction,
             'SG_gas': self.sgs_gas_pure.tolist() + [np.nan] * self.n_fraction,
@@ -333,9 +333,9 @@ class PropertyTable(object):
         self.column_mapping = {
             'Name': ['name', 'compound', 'chemical'],
             'CAS': ['cas', 'casrn', 'cas number'],
-            'Mole Fraction': ['mole fraction', 'mole frac', 'mole'],
+            'Mole_Fraction': ['mole_fraction', 'mole fraction', 'mole frac', 'mole', 'mole_frac'],
             'MW': ['mw', 'molar mass', 'molecular weight'],
-            'Mass Fraction': ['mass fraction', 'mass frac', 'mass'],
+            'Mass_Fraction': ['mass_fraction', 'mass_frac', 'mass fraction', 'mass frac', 'mass'],
             'GHV_gas': ['ghv_gas', 'ghv gas', 'gas ghv', 'vapor ghv', 'ghv_vapor', 'ghv vapor'],
             'GHV_liq': ['ghv_liq', 'ghv liq', 'liq ghv', 'liquid ghv', 'ghv_liquid', 'ghv liquid'],
             'SG_gas': ['sg_gas', 'sg gas', 'gas sg', 'vapor sg', 'sg_vapor', 'sg vapor'],
@@ -344,9 +344,9 @@ class PropertyTable(object):
         self.summary_stats_method = {
             "Name": None,
             "CAS": None,
-            "Mole Fraction": 'sum',
+            "Mole_Fraction": 'sum',
             "MW": 'mole_frac_mean',
-            "Mass Fraction": 'sum',
+            "Mass_Fraction": 'sum',
             "GHV_gas": 'mole_frac_mean',  # mass_frac_mean for other option
             "GHV_liq": 'mass_frac_mean',
             "SG_gas": 'mole_frac_mean',
@@ -354,6 +354,35 @@ class PropertyTable(object):
         }
         self._handle_summary()
         self._internal_update_property()
+
+    def _validate_SCNProperty_kwargs(self):
+
+        constructor_signature = inspect.signature(SCNProperty.__init__)
+        allowed_keys = [param.name for param in constructor_signature.parameters.values() if param.name != 'self']
+
+        # Special keywords that are prohibited. These values must be provided in other ways.
+        prohibited_keywords = ['sg', 'mw', 'Tb']
+
+        unexpected_keys = []
+        prohibited_keys = []
+
+        # Check for unexpected keywords
+        for key in self.SCNProperty_kwargs:
+            if key not in allowed_keys:
+                unexpected_keys.append(f"'{key}'")
+
+        # Check for the use of prohibited keywords
+        for key in prohibited_keywords:
+            if key in self.SCNProperty_kwargs:
+                prohibited_keys.append(f"'{key}'")
+
+        # If there are any unexpected or prohibited keywords, raise appropriate exceptions
+        if unexpected_keys:
+            raise TypeError(f"__init__() got an unexpected keys(s): {', '.join(unexpected_keys)}")
+
+        if prohibited_keys:
+            raise TypeError(f"The use of {', '.join(prohibited_keys)} is prohibited when provided as SCNProperty_kwargs. From: {self.__class__.__name__}")
+
 
     def _map_input_to_key(self, user_input):
         user_input_lower = user_input.lower()
@@ -369,7 +398,7 @@ class PropertyTable(object):
         if not self.summary:
             raise ValueError(f"Summary is set to False. Set summary=True to use this method. From: {self.__class__.__name__}")
 
-        excluded_cols = ['Name', 'CAS', 'Mole Fraction']
+        excluded_cols = ['Name', 'CAS', 'Mole_Fraction']
         # code to update column value of table_summary with chemical_name as column name. table_summary is always a 1 row df.
         for key, value in props_dict.items():
             column = self._map_input_to_key(key)
@@ -399,13 +428,13 @@ class PropertyTable(object):
             if operation == 'sum':
                 solution = value - knowns.sum()
             elif operation == 'mole_frac_mean':
-                mole_frac_knowns = self.table_['Mole Fraction'].drop(target_idx)
+                mole_frac_knowns = self.table_['Mole_Fraction'].drop(target_idx)
                 weighted_sum = (mole_frac_knowns * knowns).sum()
-                target_mole_frac = self.table_.loc[target_idx, 'Mole Fraction']
+                target_mole_frac = self.table_.loc[target_idx, 'Mole_Fraction']
                 solution = (value - weighted_sum) / target_mole_frac
             elif operation == 'mass_frac_mean':
-                weighted_sum = (self.table_['Mass Fraction'] * knowns).sum()
-                solution = (value - weighted_sum) / self.table_.loc[target_idx, 'Mass Fraction']
+                weighted_sum = (self.table_['Mass_Fraction'] * knowns).sum()
+                solution = (value - weighted_sum) / self.table_.loc[target_idx, 'Mass_Fraction']
             elif operation is None:
                 solution = None
             else:
@@ -426,10 +455,10 @@ class PropertyTable(object):
         # code to check if self.table.loc[max(self.compound_indices_dict.values()) + 1, column] is np.nan
         if pd.isna(self.table.loc[max(self.compound_indices_dict.values()) + 1, column]):
             self.table.loc[max(self.compound_indices_dict.values()) + 1, column] = value
-            print('forced')
 
     # update directly from the user input
     def update_property(self, name, props_dict, reset=True):
+
         self._validate_chemical_name(name)
 
         row_index = self.table_[self.table_['Name'] == name].index
@@ -441,7 +470,7 @@ class PropertyTable(object):
             properties.append(key)
 
         if reset is True:
-            excluded_cols = ['Name', 'CAS', 'Mole Fraction', *properties]
+            excluded_cols = ['Name', 'CAS', 'Mole_Fraction', *properties]
             target_idx = self.compound_indices_dict[name]
             self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
 
@@ -461,7 +490,7 @@ class PropertyTable(object):
         rules = {
             'MW': {
                 'weighted_avg': {
-                    'required_columns': [['Mole Fraction']],
+                    'required_columns': [['Mole_Fraction']],
                     'total_required': [['MW']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -477,15 +506,15 @@ class PropertyTable(object):
                     ],
                 },
             },
-            'Mass Fraction': {
+            'Mass_Fraction': {
                 'weighted_avg': {  # notes: weighted average method needs to be removed.
-                    'required_columns': [['Mass Fraction']],
-                    'total_required': [['Mass Fraction']],
+                    'required_columns': [['Mass_Fraction']],
+                    'total_required': [['Mass_Fraction']],
                     'required_others': [[None]],
                     'funcs': [None],
                 },
                 'correlation': {
-                    'required_columns': [['Mole Fraction', 'MW']],
+                    'required_columns': [['Mole_Fraction', 'MW']],
                     'total_required': [['MW']],
                     'required_others': [[None]],
                     'funcs': [self._calc_mass_frac_from_mole_frac_mw],
@@ -493,7 +522,7 @@ class PropertyTable(object):
             },
             'GHV_gas': {
                 'weighted_avg': {
-                    'required_columns': [['Mole Fraction']],
+                    'required_columns': [['Mole_Fraction']],
                     'total_required': [['GHV_gas']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -507,7 +536,7 @@ class PropertyTable(object):
             },
             'GHV_liq': {
                 'weighted_avg': {
-                    'required_columns': [['Mass Fraction']],
+                    'required_columns': [['Mass_Fraction']],
                     'total_required': [['GHV_liq']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -521,7 +550,7 @@ class PropertyTable(object):
             },
             'SG_gas': {
                 'weighted_avg': {
-                    'required_columns': [['Mole Fraction']],
+                    'required_columns': [['Mole_Fraction']],
                     'total_required': [['SG_gas']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -535,7 +564,7 @@ class PropertyTable(object):
             },
             'SG_liq': {
                 'weighted_avg': {
-                    'required_columns': [['Mass Fraction']],
+                    'required_columns': [['Mass_Fraction']],
                     'total_required': [['SG_liq']],
                     'required_others': [[None]],
                     'funcs': [None],
@@ -567,20 +596,20 @@ class PropertyTable(object):
 
             # If any NaN values are present in the column, summary stats can't be calculated
             if pd.isnull(self.table_[column]).any():
-                summary_row[column] = None
+                summary_row[column] = np.nan
                 continue
 
-            summary_row[column] = None
+            summary_row[column] = np.nan
             if operation == 'sum':
                 summary_row[column] = self.table_[column].sum()
             elif operation == 'mole_frac_mean':
-                if not pd.isnull(self.table_['Mole Fraction']).any():
-                    weighted_sum = (self.table_['Mole Fraction'] * self.table_[column]).sum()
-                    summary_row[column] = weighted_sum / self.table_['Mole Fraction'].sum()
+                if not pd.isnull(self.table_['Mole_Fraction']).any():
+                    weighted_sum = (self.table_['Mole_Fraction'] * self.table_[column]).sum()
+                    summary_row[column] = weighted_sum / self.table_['Mole_Fraction'].sum()
             elif operation == 'mass_frac_mean':
-                if not pd.isnull(self.table_['Mass Fraction']).any():
-                    weighted_sum = (self.table_['Mass Fraction'] * self.table_[column]).sum()
-                    summary_row[column] = weighted_sum / self.table_['Mass Fraction'].sum()
+                if not pd.isnull(self.table_['Mass_Fraction']).any():
+                    weighted_sum = (self.table_['Mass_Fraction'] * self.table_[column]).sum()
+                    summary_row[column] = weighted_sum / self.table_['Mass_Fraction'].sum()
             elif operation is None:
                 pass
             else:
@@ -616,11 +645,8 @@ class PropertyTable(object):
                     if all(method_details['required_others'][i]):
                         required_others_satisfied = True  # implement actual function later
 
-                    #print(property, ':', required_columns_satisfied, total_required_satisfied, required_others_satisfied)
-
                     if all([required_columns_satisfied, total_required_satisfied, required_others_satisfied]):
 
-                        #print('all passed---------------------')
                         args = []
                         if all(method_details['required_columns'][i]):
                             args = [row[col] for col in method_details['required_columns'][i]]  # this returns KeyError: None for list containing None, so all() method is used to avoid this error.
@@ -634,9 +660,9 @@ class PropertyTable(object):
                             args_others = []
 
                         func = method_details['funcs'][i]
-                        if func == None:
-                            print('property %s is not computed cuz no function' % property)
-                            continue
+                        if func is None:
+                            raise NotImplementedError(
+                                f"property '{property}' is not computed because its function is not implemented yet. This message should not be triggered. Please submit Issues on github if you see this message.")
 
                         calculated_value = func(*args, *args_others, *args_total)
 
@@ -647,7 +673,6 @@ class PropertyTable(object):
     def _calc_GHV_gas_from_mw(self, mw):
         scn_obj = SCNProperty(mw=mw, **self.SCNProperty_kwargs)
         aromatic_fraction = scn_obj.xa
-        aromatic_fraction = 0
         GHV_gas = newton(lambda ghv_gas: correlations.mw_ghv(mw, ghv_gas, aromatic_fraction), x0=5000, maxiter=50)
         return GHV_gas
 
@@ -859,7 +884,7 @@ shamrock = dict([
 #df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
 #df = SCNProperty.build_table([i for i in range(84, 94, 1)], col='mw', warning=True, model='kf')
 #print(df.to_string())
-print(SCNProperty(mw=90))
+
 
 # complete test scripts
 # ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': False, 'model': 'kf'})
