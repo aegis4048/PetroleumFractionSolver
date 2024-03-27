@@ -407,10 +407,12 @@ class PropertyTable(object):
 
             operation = self.summary_stats_method[column]
             unknowns = self.table_[column][self.table_[column].isna()]
+            unknown_names = self.table_.loc[unknowns.index, 'Name']
 
             # get index of the target plus fraction to solve for.
             if len(unknowns) > 1:
-                raise ValueError(f"More than one unknown value found in column '{column}'. From: {self.__class__.__name__}")
+                raise ValueError(f"More than one ({len(unknowns)}) NaN values found in column '{column}' "
+                                 f"for compounds: {list(unknown_names.values)}. Provide their values so there's only 1 unknown value. From: {self.__class__.__name__}")
             elif len(unknowns) == 0:
                 if target_compound is None:
                     if len(self.names_fraction) != 1:
@@ -973,4 +975,4 @@ shamrock = dict([
 
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1
-
+# Todo: make dictionary objects for each of Plus fraction, and total properties

@@ -84,6 +84,21 @@ sample_3 = dict([
     ('Hexanes+', 0.889),
 ])
 
+air = {
+    'nitrogen': 78.10222649645685,
+    'oxygen': 20.946060743576158,
+    'argon': 0.9160026564077035,
+    'carbon dioxide': 0.03300009570027753,
+    'neon': 0.0018200052780153063,
+    'helium': 0.0005200015080043732,
+    'methane': 0.00015000043500126153,
+    'krypton': 0.00011000031900092511,
+    'hydrogen': 5.000014500042051e-05,
+    'nitrous oxide': 3.0000087000252303e-05,
+    'carbon monoxide': 2.00000580001682e-05,
+    'xenon': 1.0000028982659614e-05
+}
+
 # Todo: need another sample to test non-GPA properties
 
 # Documents\GasCompressibiltiyFactor-py>python -m unittest tests.test_gascomp
@@ -279,8 +294,7 @@ class Test_SCNProperty(unittest.TestCase):
         with self.assertRaises(TypeError):
             PropertyTable(sample_1, summary=True, warning=True, SCNProperty_kwargs={**SCN_kwargs, 'Tb': 200})
 
-
-        print('----------------------------------------------------------------------------------------')
+        # checking index of the plus fraction
         ptable1a = PropertyTable(sample_1a, **kwargs)
         self.assertEqual(ptable1a.names_fraction, ['Hexanes+'])
         self.assertEqual(len(ptable1a.names_fraction), 1)
@@ -289,8 +303,6 @@ class Test_SCNProperty(unittest.TestCase):
         ################# new test ###########################
         ptable1b = PropertyTable(sample_1, **kwargs)
         idx_total = max(ptable1b.compound_indices_dict.values()) + 1  # total row is the last row
-        print(ptable1b.table.to_string())
-        print('----------------------------------------------------------------------------------------')
 
         """------------------------- Basic calculated value checks -------------------------"""
         # GHV_liq input shouldn't calculate other columns, as it requires GHV_Gas and MW to solve for other properties
@@ -302,62 +314,62 @@ class Test_SCNProperty(unittest.TestCase):
 
         ptable1c = PropertyTable(sample_1, **kwargs)
         ptable1c.update_property('Hexanes+', {'sg_gas': 3.0180})
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'MW'], 23.379, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'Mass_Fraction'], 1, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'GHV_gas'], 1380.186, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'GHV_liq'], 22403.2729, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'MW'], 23.378916, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'Mass_Fraction'], 1.000000, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'GHV_gas'], 1380.181508, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'GHV_liq'], 22403.289082, places=3)
         self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'SG_gas'], 0.807207, places=3)
         self.assertAlmostEqual(ptable1c.table.loc[idx_total, 'SG_liq'], 0.350053, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'MW'], 87.431460, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016642, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'GHV_gas'], 4779.327525, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'GHV_liq'], 20744.009182, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'MW'], 87.408825, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016638, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'GHV_gas'], 4778.214334, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'GHV_liq'], 20744.548056, places=3)
         self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'SG_gas'], 3.018000, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'SG_liq'], 0.697153, places=3)
+        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'SG_liq'], 0.697077, places=3)
 
         ptable1d = PropertyTable(sample_1, **kwargs)
         ptable1d.update_property('Hexanes+', {'SG liq': 0.6933})
         self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'MW'], 23.373998, places=3)
-        self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'Mass_Fraction'], 1, places=3)
+        self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'Mass_Fraction'], 1.000000, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'GHV_gas'], 1379.939882, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'GHV_liq'], 22404.080005, places=3)
-        self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'SG_gas'], 0.807034, places=3)
+        self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'SG_gas'], 0.807037, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total, 'SG_liq'], 0.350036, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'MW'], 86.303649, places=3)
-        self.assertAlmostEqual(ptable1c.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016431, places=3)
+        self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016431, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'GHV_gas'], 4723.916421, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'GHV_liq'], 20771.443629, places=3)
-        self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'SG_gas'], 2.979070, places=3)
+        self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'SG_gas'], 2.979841, places=3)
         self.assertAlmostEqual(ptable1d.table.loc[idx_total - 1, 'SG_liq'], 0.693300, places=3)
 
         ptable1e = PropertyTable(sample_1, **kwargs)
         ptable1e.update_property('Hexanes+', {'ghv gas': 4774.1})
         self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'MW'], 23.378544, places=3)
-        self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'Mass_Fraction'], 1, places=3)
+        self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'Mass_Fraction'], 1.000000, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'GHV_gas'], 1380.163199, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'GHV_liq'], 22403.348666, places=3)
-        self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'SG_gas'], 0.807191, places=3)
+        self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'SG_gas'], 0.807194, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total, 'SG_liq'], 0.350051, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'MW'], 87.325161, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016622, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'GHV_gas'], 4774.100000, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'GHV_liq'], 20746.543528, places=3)
-        self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'SG_gas'], 3.014331, places=3)
+        self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'SG_gas'], 3.015111, places=3)
         self.assertAlmostEqual(ptable1e.table.loc[idx_total - 1, 'SG_liq'], 0.696796, places=3)
 
         ptable1f = PropertyTable(sample_1, **kwargs)
         ptable1f.update_property('Hexanes+', {'MW': 87.665})
         self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'MW'], 23.380056, places=3)
-        self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'Mass_Fraction'], 1, places=3)
+        self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'Mass_Fraction'], 1.000000, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'GHV_gas'], 1380.237584, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'GHV_liq'], 22403.106907, places=3)
-        self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'SG_gas'], 0.807243, places=3)
+        self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'SG_gas'], 0.807246, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total, 'SG_liq'], 0.350056, places=3)
-        self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'MW'], 87.665, places=3)
+        self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'MW'], 87.665000, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'Mass_Fraction'], 0.016686, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'GHV_gas'], 4790.815715, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'GHV_liq'], 20738.477101, places=3)
-        self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'SG_gas'], 3.026061, places=3)
+        self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'SG_gas'], 3.026845, places=3)
         self.assertAlmostEqual(ptable1f.table.loc[idx_total - 1, 'SG_liq'], 0.697933, places=3)
 
         ptable1g = PropertyTable(sample_1, **kwargs)
@@ -365,6 +377,14 @@ class Test_SCNProperty(unittest.TestCase):
         self.assertTrue(pd.isna(ptable1g.table.loc[idx_total, 'GHV_liq']))
         self.assertTrue(pd.isna(ptable1g.table.loc[idx_total, 'Mass_Fraction']))
         self.assertTrue(pd.isna(ptable1g.table.loc[0, 'Mass_Fraction']))
+
+        # sample 2 testing - has no fractions. Everything should solve without providing Plus fraction updates
+        ptable2 = PropertyTable(sample_2, **kwargs)
+        idx_total = max(ptable2.compound_indices_dict.values()) + 1
+        self.assertFalse(ptable2.table.drop(columns=['CAS']).isnull().values.any())
+        self.assertAlmostEqual(ptable2.table.loc[idx_total, 'SG_gas'], 1.404593, places=3)
+        self.assertAlmostEqual(ptable2.table.loc[idx_total, 'SG_liq'], 0.478981, places=3)
+        self.assertAlmostEqual(ptable2.table.loc[idx_total, 'MW'], 40.680797, places=3)
 
         """------------------------- Test calculation priority for MW -------------------------"""
         # the values are computed in the orders of
@@ -405,28 +425,163 @@ class Test_SCNProperty(unittest.TestCase):
         mw_from_this = ptable1h.table.loc[9, 'MW']
         self.assertAlmostEqual(mw_from_this, mw_from_sg_gas, places=3)
 
-        """--------------------------------------------------------------------------------"""
+        """--------------------------- testing for 2 fractions scenario ---------------------------"""
 
-        ptable2 = PropertyTable(sample_1b, **kwargs)
-        self.assertEqual(ptable2.names_fraction, ['Hexanes+', 'Heptanes+'])
-        self.assertEqual(len(ptable2.names_fraction), 2)
-        self.assertEqual(ptable2.compound_indices_dict[ptable2.names_fraction[0]], 9)
-        self.assertEqual(ptable2.compound_indices_dict[ptable2.names_fraction[1]], 10)
+        ptable1b = PropertyTable(sample_1b, **kwargs)
+        idx_total = max(ptable1b.compound_indices_dict.values()) + 1
+
+        self.assertEqual(ptable1b.names_fraction, ['Hexanes+', 'Heptanes+'])
+        self.assertEqual(len(ptable1b.names_fraction), 2)
+        self.assertEqual(ptable1b.compound_indices_dict[ptable1b.names_fraction[0]], 9)
+        self.assertEqual(ptable1b.compound_indices_dict[ptable1b.names_fraction[1]], 10)
 
         # No Nones, instead I implemented np.nan (NaN)
-        df2 = ptable2.table
-        has_None = df2.isin([None]).any().any()
+
+        has_None = ptable1b.table.isin([None]).any().any()
         self.assertFalse(has_None, "DataFrame contains 'None' values, which is not allowed.")
 
-        print(df2.to_string())
+        # since there are two fractions, providing values for only 1 fraction shouldn't calculate total properties
+        ptable1b = PropertyTable(sample_1b, **kwargs)
+        ptable1b.update_property('Hexanes+', {'MW': 87.665})
+        c7_idx = ptable1b.compound_indices_dict['Heptanes+']
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'GHV_liq']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'MW']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'Mass_Fraction']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'GHV_gas']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'SG_liq']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[idx_total, 'SG_gas']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'GHV_liq']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'MW']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'Mass_Fraction']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'GHV_gas']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'SG_liq']))
+        self.assertTrue(pd.isna(ptable1b.table.loc[c7_idx, 'SG_gas']))
+
+        ptable1b = PropertyTable(sample_1b, **kwargs)
+        ptable1b.update_property('Hexanes+', {'MW': 87.665})
+        ptable1b.update_property('Heptanes+', {'MW': 90})
+
+        # new composition of bigger mole fraction of the plus fractions are tested to verify calculation
+        # in multiple fractions scenario. The SG_gas and SG_liq values are cross-checked with promax outputs.
+        test = dict([
+            ('methane', 40),
+            ('Hexanes+', 30),
+            ('Heptanes+', 30),  # 0.743
+        ])
+        test_table = PropertyTable(test, **kwargs)
+        test_table.update_property('Hexanes+', {'MW': 87.665})
+        test_table.update_property('Heptanes+', {'MW': 90})
+        idx_total = max(test_table.compound_indices_dict.values()) + 1
+        self.assertAlmostEqual(test_table.table.loc[idx_total, 'SG_gas'], 2.061377, places=3)
+        self.assertAlmostEqual(test_table.table.loc[idx_total, 'SG_liq'], 0.541002, places=3)
+
+        """--------------------------- 6:3:1 Ternary mixture for Hexanes+ ---------------------------"""
+
+        test = dict([
+            ('n-hexane', 60),
+            ('heptane', 30),
+            ('n-octane', 10),
+        ])
+        test_table = PropertyTable(test, **kwargs)
+        self.assertAlmostEqual(test_table.table.loc[idx_total, 'SG_gas'], 3.21755, places=3)
+        self.assertAlmostEqual(test_table.table.loc[idx_total, 'SG_liq'], 0.67556, places=3)
+        self.assertAlmostEqual(test_table.table.loc[idx_total, 'GHV_gas'], 5129.22, places=3)
+
+        # Properties of ambient air MW = 28.9625. Composition originate from Table A.1 of GPA 2172-19
+        # Demonstration to show that the library supports non-GPA 2145 components as well
+        air_table = PropertyTable(air, **kwargs)
+        idx_total = max(air_table.compound_indices_dict.values()) + 1
+        self.assertAlmostEqual(air_table.table.loc[idx_total, 'MW'], 28.962562, places=3)
+
+        """--------------------------- update_total tests with 1 property ---------------------------"""
+
+        update_total_kwargs = {
+            'target_compound': None,
+            'reset': True,
+        }
+
+        ptable3 = PropertyTable(sample_3, **kwargs)
+        ptable3.update_property('Hexanes+', {'MW': 90.161})
+
+        idx_plusFrac = ptable3.compound_indices_dict['Hexanes+']
+        idx_total = max(ptable3.compound_indices_dict.values()) + 1
+
+        mw_total = ptable3.table.loc[idx_total, 'MW']
+        mw_from_update_property = ptable3.table.loc[idx_plusFrac, 'MW']
+        ghv_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_gas']
+        ghv_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_liq']
+        sg_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_gas']
+        sg_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_liq']
+
+        ptable3a = PropertyTable(sample_3, **kwargs)
+        ptable3a.update_total({'mw': mw_total}, **update_total_kwargs)
+        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_gas'], ghv_gas_from_update_property, places=1)
+        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_liq'], ghv_liq_from_update_property, places=1)
+        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_gas'], sg_gas_from_update_property, places=1)
+        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_liq'], sg_liq_from_update_property, places=1)
+        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'MW'], mw_from_update_property, places=1)
+
+        """--------------------------- update_total tests with 2 properties ---------------------------"""
+
+        ptable4 = PropertyTable(sample_1b, **kwargs)
+        ptable4.update_property('Hexanes+', {'MW': 87.665})
+        ptable4.update_property('Heptanes+', {'MW': 90})
+
+        idx_hexanes = ptable4.compound_indices_dict['Hexanes+']
+        idx_heptanes = ptable4.compound_indices_dict['Heptanes+']
+        idx_total = max(ptable4.compound_indices_dict.values()) + 1
+
+        mw_total = ptable4.table.loc[idx_total, 'MW']
+        mw_hexanes_from_update_property = ptable4.table.loc[idx_hexanes, 'MW']
+        mw_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'MW']
+
+        ghv_gas_hexanes_from_update_property = ptable4.table.loc[idx_hexanes, 'GHV_gas']
+        ghv_liq_hexanes_from_update_property = ptable4.table.loc[idx_hexanes, 'GHV_liq']
+        sg_gas_hexanes_from_update_property = ptable4.table.loc[idx_hexanes, 'SG_gas']
+        sg_liq_hexanes_from_update_property = ptable4.table.loc[idx_hexanes, 'SG_liq']
+        ghv_gas_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'GHV_gas']
+        ghv_liq_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'GHV_liq']
+        sg_gas_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'SG_gas']
+        sg_liq_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'SG_liq']
+
+        ptable4a = PropertyTable(sample_1b, **kwargs)
+
+        print(ptable4a.table.to_string())
+
+        ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs})
+        # ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs, 'target_compound': 'Hexanes+'})
+        self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'GHV_gas'], ghv_gas_hexanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'GHV_liq'], ghv_liq_hexanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'SG_gas'], sg_gas_hexanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'SG_liq'], sg_liq_hexanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'MW'], mw_hexanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'GHV_gas'], ghv_gas_heptanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'GHV_liq'], ghv_liq_heptanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'SG_gas'], sg_gas_heptanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'SG_liq'], sg_liq_heptanes_from_update_property, places=1)
+        self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'MW'], mw_heptanes_from_update_property, places=1)
 
 
+
+
+
+
+
+        # Todo: make a test case for unidentified compound - description for + fraction detection condition (+, plus)
+
+
+        # Todo: add custom chemical name for n-heptane
+
+
+        # Todo: check again how GHV values of fractions are computed - GPA 2172 or ISO 6976 according to Promax
 
         # Todo: add Tb column on the returned DF, make the total Tb as NA because its essentially a bubble point
 
 
         # Todo: this column testing needs to be repeated for all test cases
         # ensure that all numeric columns have dtype=float64
+
+        df2 = ptable2.table
         exclude_columns = ['Name', 'CAS']
         for column in df2.columns.difference(exclude_columns):
             self.assertTrue(df2[column].dtype == np.float64, f"Column '{column}' is not of dtype float64.")

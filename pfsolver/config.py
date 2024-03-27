@@ -3,7 +3,7 @@ constants = {
     "T_STANDARD": 288.7056,  # Temperature in Kelvin
     "P_STANDARD": 101325.0,    # Pressure in Pascal
     "R": 8.31446261815324,
-    "MW_AIR": 28.97,  # molecular weight of air at standard conditions, g/mol
+    "MW_AIR": 28.9625,  # molecular weight of air at standard conditions, g/mol, GPA 2172-19
     "RHO_WATER": 999.0170125317171,  # density of water @60F, 1atm (kg/m^3) according to IAPWS-95 standard. Calculate rho at different conditions by:  chemicals.iapws95_rho(288.706, 101325) (K, pascal)
 }
 GPA_table_column_mapping = {
