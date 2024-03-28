@@ -189,7 +189,7 @@ class SCNProperty(object):
         self.RI_intercept = correlations.calc_RI_intercept(self.sg, self.ri)
         self.v100, self.v210 = correlations.calc_v100_v210(self.Tb, self.sg)
 
-        if self.mw > 200:
+        if utilities.handle_rounding_error(self.mw, 'mw') > 200:  # decimal points for floating point errors
             self.SUS_100 = correlations.calc_SUS_100(self.v100)
             self.VGC = correlations.calc_VGC(self.sg, self.SUS_100)
             self.VG = self.VGC
@@ -423,7 +423,9 @@ class PropertyTable(object):
                 else:
                     target_idx = self.compound_indices_dict[target_compound]
             else:
+                #print('---sfsfd')
                 target_idx = unknowns.index[0]  # len(unknowns) == 1
+                #print(target_idx)
 
             knowns = self.table_[column].drop(target_idx)
 

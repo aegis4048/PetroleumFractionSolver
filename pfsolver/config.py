@@ -13,6 +13,9 @@ GPA_table_column_mapping = {
     'sg_gas_60F': 'Ideal Gas Relative Density @60F:1atm',
     'mw': 'Molar Mass [g/mol]',
 }
+rounding_error_decimal_points = {
+    'mw': 6,
+}
 
 
 def update_config(user_config):

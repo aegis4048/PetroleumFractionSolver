@@ -499,33 +499,35 @@ class Test_SCNProperty(unittest.TestCase):
             'target_compound': None,
             'reset': True,
         }
+        for mw in [i for i in range(86, 600, 5)]:
 
-        ptable3 = PropertyTable(sample_3, **kwargs)
-        ptable3.update_property('Hexanes+', {'MW': 90.161})
+            ptable3 = PropertyTable(sample_3, **kwargs)
+            ptable3.update_property('Hexanes+', {'MW': mw})
 
-        idx_plusFrac = ptable3.compound_indices_dict['Hexanes+']
-        idx_total = max(ptable3.compound_indices_dict.values()) + 1
+            idx_plusFrac = ptable3.compound_indices_dict['Hexanes+']
+            idx_total = max(ptable3.compound_indices_dict.values()) + 1
 
-        mw_total = ptable3.table.loc[idx_total, 'MW']
-        mw_from_update_property = ptable3.table.loc[idx_plusFrac, 'MW']
-        ghv_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_gas']
-        ghv_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_liq']
-        sg_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_gas']
-        sg_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_liq']
+            mw_total = ptable3.table.loc[idx_total, 'MW']
+            mw_from_update_property = ptable3.table.loc[idx_plusFrac, 'MW']
+            ghv_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_gas']
+            ghv_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'GHV_liq']
+            sg_gas_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_gas']
+            sg_liq_from_update_property = ptable3.table.loc[idx_plusFrac, 'SG_liq']
 
-        ptable3a = PropertyTable(sample_3, **kwargs)
-        ptable3a.update_total({'mw': mw_total}, **update_total_kwargs)
-        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_gas'], ghv_gas_from_update_property, places=1)
-        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_liq'], ghv_liq_from_update_property, places=1)
-        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_gas'], sg_gas_from_update_property, places=1)
-        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_liq'], sg_liq_from_update_property, places=1)
-        self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'MW'], mw_from_update_property, places=1)
+            ptable3a = PropertyTable(sample_3, **kwargs)
+            ptable3a.update_total({'mw': mw_total}, **update_total_kwargs)
+
+            self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_gas'], ghv_gas_from_update_property, places=1)
+            self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'GHV_liq'], ghv_liq_from_update_property, places=1)
+            self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_gas'], sg_gas_from_update_property, places=1)
+            self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'SG_liq'], sg_liq_from_update_property, places=1)
+            self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'MW'], mw_from_update_property, places=1)
 
         """--------------------------- update_total tests with 2 properties ---------------------------"""
 
         ptable4 = PropertyTable(sample_1b, **kwargs)
         ptable4.update_property('Hexanes+', {'MW': 87.665})
-        ptable4.update_property('Heptanes+', {'MW': 90})
+        ptable4.update_property('Heptanes+', {'MW': 96})
 
         idx_hexanes = ptable4.compound_indices_dict['Hexanes+']
         idx_heptanes = ptable4.compound_indices_dict['Heptanes+']
@@ -544,12 +546,18 @@ class Test_SCNProperty(unittest.TestCase):
         sg_gas_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'SG_gas']
         sg_liq_heptanes_from_update_property = ptable4.table.loc[idx_heptanes, 'SG_liq']
 
+        print(ptable4.table.to_string())
+        print('---------------------------------------------------------------')
+
         ptable4a = PropertyTable(sample_1b, **kwargs)
 
+        ptable4a.update_property('Hexanes+', {'MW': 87.665})
+
         print(ptable4a.table.to_string())
+        print('---------------------------------------------------------------')
 
         ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs})
-        # ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs, 'target_compound': 'Hexanes+'})
+        #ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs, 'target_compound': 'Hexanes+'})
         self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'GHV_gas'], ghv_gas_hexanes_from_update_property, places=1)
         self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'GHV_liq'], ghv_liq_hexanes_from_update_property, places=1)
         self.assertAlmostEqual(ptable4a.table.loc[idx_hexanes, 'SG_gas'], sg_gas_hexanes_from_update_property, places=1)
@@ -560,10 +568,7 @@ class Test_SCNProperty(unittest.TestCase):
         self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'SG_gas'], sg_gas_heptanes_from_update_property, places=1)
         self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'SG_liq'], sg_liq_heptanes_from_update_property, places=1)
         self.assertAlmostEqual(ptable4a.table.loc[idx_heptanes, 'MW'], mw_heptanes_from_update_property, places=1)
-
-
-
-
+        # Todo: update_total fails when more than 2 plus fractions are used. Test more scenarios
 
 
 

@@ -5,6 +5,10 @@ import warnings
 CONSTANTS = config.constants
 
 
+def handle_rounding_error(value, key):
+    n = config.rounding_error_decimal_points[key]
+    return round(value, n)
+
 def normalize_composition(comp_dict):
     """
     :param comp_dict: un-normalized dictionary of composition. {"CH4": 3, "C2H6", 6}

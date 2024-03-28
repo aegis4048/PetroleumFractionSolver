@@ -1,5 +1,6 @@
 import numpy as np
 from . import config
+from . import utilities
 
 import pint
 UREG = pint.UnitRegistry()
@@ -246,7 +247,12 @@ def calc_PNA_comp(MW, VG, RI_intercept):
     working range: MW 70 to 600
     """
 
-    if MW > 200:
+    #if MW<= 200.05 and MW >= 199.95:
+    #    print('--- rounding triggered ---')
+    #    MW = round(MW)  # rounding to 8 decimal places to avoid floating point errors
+    #    print(MW)
+
+    if utilities.handle_rounding_error(MW, 'mw') > 200:  # decimal points for floating point errors
         a = 2.5737
         b = 1.0133
         c = -3.573
@@ -271,6 +277,8 @@ def calc_PNA_comp(MW, VG, RI_intercept):
     xp = a + b * RI_intercept + c * VG
     xn = d + e * RI_intercept + f * VG
     xa = g + h * RI_intercept + i * VG
+
+    # Todo: for some reason this function is executed twice when doing update_total, figure out why.
 
     return xp, xn, xa
 
