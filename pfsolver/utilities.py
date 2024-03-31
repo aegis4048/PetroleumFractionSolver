@@ -3,6 +3,22 @@ import warnings
 
 
 CONSTANTS = config.constants
+ISSUED_WARNINGS_REGISTRY = set()
+
+
+def issue_unique_warning(message, warning_type=None):
+    """
+    Issues a warning if it hasn't been issued before.
+
+    Args:
+    - message (str): The warning message.
+    - warning_type (Warning): The type of the warning.
+    """
+    warning_signature = (message, warning_type)
+
+    if warning_signature not in ISSUED_WARNINGS_REGISTRY:
+        warnings.warn(message, warning_type)
+        ISSUED_WARNINGS_REGISTRY.add(warning_signature)
 
 
 def handle_rounding_error(value, key):
@@ -49,5 +65,5 @@ def check_ranges(target_dict, ref_dict, class_name=None, warning_obj=None):
             msg = f"{target_key} value {target_val} is out of recommended working range [{min_val}, {max_val}]. Set warning=False to suppress this warning."
             if class_name is not None:
                 msg += f" From: {class_name}"
-            warnings.warn(msg, warning_obj)
+            issue_unique_warning(msg, warning_obj)
 

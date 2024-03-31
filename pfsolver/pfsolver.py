@@ -10,7 +10,7 @@ import os
 import inspect
 
 from . import correlations
-from .customExceptions import SCNPropertyWarning
+from .customExceptions import SCNPropertyWarning, PropertyTableWarning
 from . import config
 from . import utilities
 
@@ -50,6 +50,8 @@ class SCNProperty(object):
             raise ValueError("At least one of sg, mw, or Tb must be provided. From: {}".format(self.__class__.__name__))
 
         self.warning = warning
+        config.update_settings({'warning': warning})
+
         self.model = model
         self.subtract = subtract
         self.kwargs_options = {
@@ -200,11 +202,22 @@ class SCNProperty(object):
         xp, xn, xa = correlations.calc_PNA_comp(self.mw, self.VG, self.RI_intercept)
 
         if self.subtract == 'naphthenes':
-            self.xn = 1 - xp - xa
+            xn = 1 - xp - xa
         elif self.subtract == 'paraffins':
-            self.xp = 1 - xn - xa
+            xp = 1 - xn - xa
         else:  # self.subtract == 'aromatics':
-            self.xa = 1 - xp - xn
+            xa = 1 - xp - xn
+
+        if pd.isnull(xp) or pd.isnull(xn) or pd.isnull(xa):
+            xp = 1
+            xn = 0
+            xa = 0
+
+            if self.warning:
+                msgs = f"PNA composition failed to solve. Replacing with default xp={xp} (paraffin), " \
+                       f"xn={xn} (naphthenic), and xa={xa} (aromatic). From: {self.__class__.__name__}"
+                utilities.issue_unique_warning(msgs, SCNPropertyWarning)
+
 
         return xp, xn, xa
 
@@ -221,7 +234,6 @@ class SCNProperty(object):
         while len(resolved_vars_keys) < len(self._attributes):
             resolved_this_iteration = False
             for correlation_func, variables in self._correlations.items():
-
                 unresolved_vars = [var for var in variables if var not in resolved_vars_keys]
                 if len(unresolved_vars) == 1:
                     unresolved_var = unresolved_vars[0]
@@ -234,14 +246,15 @@ class SCNProperty(object):
                                                class_name=self.__class__.__name__,
                                                warning_obj=SCNPropertyWarning)
 
+
                     try:
                         self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self._prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_init_guess(unresolved_var))
                     except RuntimeError as e:
                         custom_message = f"{e}\nCustomMessage: Failed to solve with newton's method for " \
-                                         f"unresolved_var: {unresolved_var}, " \
+                                         f"unresolved_var: '{unresolved_var}', " \
                                          f"using correlation_func: {correlation_func.__name__}, " \
                                          f"initial guess for unresolved_var: {self._get_init_guess(unresolved_var)}, " \
-                                         f"resolved_vars_dict: {resolved_vars_dict}."
+                                         f"resolved_vars_dict: {resolved_vars_dict}. From: {self.__class__.__name__}"
                         raise RuntimeError(custom_message) from e
 
                     #self._attributes[unresolved_var] = newton(lambda x: correlation_func(*self._prepare_args(correlation_func, x, resolved_vars_values)), x0=self._get_init_guess(unresolved_var))
@@ -273,6 +286,7 @@ class PropertyTable(object):
         self.warning_msgs = []
         self.summary = summary
         self.table_summary = None
+        self.target_compound = None
 
         if SCNProperty_kwargs is None:
             self.SCNProperty_kwargs = {}
@@ -286,10 +300,12 @@ class PropertyTable(object):
             if self.warning:
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
                 comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
-                warnings.warn(
-                    f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been normalized. "
-                    f"To suppress this warning, replace with a normalized composition, Or set warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}\nFrom: {self.__class__.__name__}"
-                )
+                msgs = f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been " \
+                       f"normalized. To suppress this warning, replace with a normalized composition, Or set " \
+                       f"warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}" \
+                       f"\nFrom: {self.__class__.__name__}"
+                utilities.issue_unique_warning(msgs, PropertyTableWarning)
+
 
         self.df_GPA = pd.read_feather(FEATHER_PATH)
         self.names = list(self.comp_dict.keys())
@@ -303,7 +319,7 @@ class PropertyTable(object):
         self.n_pure = len(self.names_pure)
         self.n_fraction = len(self.names_fraction)
 
-        self.target_props = ['ghv', 'sg_liq_60F', 'sg_gas_60F', 'mw']
+        self.target_props = ['ghv', 'sg_liq_60F', 'sg_gas_60F', 'mw']  # reference to config.py GPA_table_column_mapping
         self.constants_pure = ChemicalConstantsPackage.constants_from_IDs(self.names_pure)
         self._check_properties_exists()
 
@@ -392,7 +408,13 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def update_total(self, props_dict, target_compound=None, reset=True):
+    def update_total(self, props_dict, target_compound=None, recalc=True):
+
+        if target_compound is not None:
+            self.target_compound = target_compound
+        #else:
+        #    if self.target_compound is None:
+        #         pass
 
         # check if summary is true
         if not self.summary:
@@ -411,21 +433,35 @@ class PropertyTable(object):
 
             # get index of the target plus fraction to solve for.
             if len(unknowns) > 1:
+
+                # these three lines of codes are just to create temporary table to print error message better
+                self.table_summary.loc[self.table_summary.index[0], column] = value
+                warnings.simplefilter(action='ignore', category=FutureWarning)
+                warning_table = pd.concat([self.table_, self.table_summary])
+
                 raise ValueError(f"More than one ({len(unknowns)}) NaN values found in column '{column}' "
-                                 f"for compounds: {list(unknown_names.values)}. Provide their values so there's only 1 unknown value. From: {self.__class__.__name__}")
+                                 f"for compounds: {list(unknown_names.values)}. Provide their values with "
+                                 f"update_property() so there's only 1 unknown value.\n"
+                                 f"{warning_table.to_string()}\n"
+                                 f"From: {self.__class__.__name__}")
             elif len(unknowns) == 0:
-                if target_compound is None:
+                if self.target_compound is None:
+                    self.target_compound = self.names_fraction[0]
+                    target_idx = self.compound_indices_dict[self.target_compound]
                     if len(self.names_fraction) != 1:
-                        raise ValueError(f"target_compound to solve for must be provided when there are more than 1 fractions. Input one of the following: {self.names_fraction}. From: {self.__class__.__name__}")
-                    else:
-                        target_compound = self.names_fraction[0]
-                        target_idx = self.compound_indices_dict[target_compound]
+                        if self.warning:
+                            msg = f"Ambiguous 'target_compound' to adjust to match the target Total properties: {props_dict}. The first " \
+                                  f"fraction compound '{self.names_fraction[0]}' is assumed to be the 'target_compound'. " \
+                                  f"It is recommended to explicitly set 'target_compound' from one of the followings to " \
+                                  f"avoid this warning: {self.names_fraction}. Set warning=False to suppress this warning. " \
+                                  f"From: {self.__class__.__name__}"
+                            utilities.issue_unique_warning(msg, PropertyTableWarning)
+
                 else:
-                    target_idx = self.compound_indices_dict[target_compound]
-            else:
-                #print('---sfsfd')
-                target_idx = unknowns.index[0]  # len(unknowns) == 1
-                #print(target_idx)
+                    target_idx = self.compound_indices_dict[self.target_compound]
+            else:  # len(unknowns) == 1
+                target_idx = unknowns.index[0]
+                self.target_compound = next(key for key, value in self.compound_indices_dict.items() if value == target_idx)
 
             knowns = self.table_[column].drop(target_idx)
 
@@ -446,22 +482,26 @@ class PropertyTable(object):
 
             self.table_.loc[target_idx, column] = solution
 
-        if reset is True:
+        if recalc is True:
             # _internal_update_property() triggers calculations only on cells with nan values
             self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
 
+
+
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
+        warnings.simplefilter('once')
         self._internal_update_property()
         self._internal_update_property()
         self._internal_update_property()
+        warnings.resetwarnings()
 
         # code to check if self.table.loc[max(self.compound_indices_dict.values()) + 1, column] is np.nan
         if pd.isna(self.table.loc[max(self.compound_indices_dict.values()) + 1, column]):
             self.table.loc[max(self.compound_indices_dict.values()) + 1, column] = value
 
     # update directly from the user input
-    def update_property(self, name, props_dict, reset=True):
+    def update_property(self, name, props_dict, recalc=True):
 
         self._validate_chemical_name(name)
 
@@ -473,7 +513,7 @@ class PropertyTable(object):
             self.table_.loc[row_index, key] = value
             properties.append(key)
 
-        if reset is True:
+        if recalc is True:
             excluded_cols = ['Name', 'CAS', 'Mole_Fraction', *properties]
             target_idx = self.compound_indices_dict[name]
             self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
@@ -668,7 +708,18 @@ class PropertyTable(object):
                             raise NotImplementedError(
                                 f"property '{property}' is not computed because its function is not implemented yet. This message should not be triggered. Please submit Issues on github if you see this message.")
 
-                        calculated_value = func(*args, *args_others, *args_total)
+                        try:
+                            calculated_value = func(*args, *args_others, *args_total)
+                        except RuntimeError as e:
+                            if self.warning:
+                                msgs = str(e)
+                                if 'From: ' not in msgs:
+                                    msgs += f" From: {self.__class__.__name__}"
+                                msgs += f"\nValue is set as NaN. Please check the input values and try again. " \
+                                        f"To suppress this warning, set warning=False."
+                                utilities.issue_unique_warning(msgs, PropertyTableWarning)
+
+                            calculated_value = None
 
                         if calculated_value is not None:
                             self.table_.loc[idx, property] = calculated_value
@@ -911,17 +962,17 @@ shamrock = dict([
 #ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
 #ptable.update_total({'liquid sg': 0.358661})
 #ptable.update_total({'gas sg': 0.8053})  # computed from C6+ mw=90.161 is 0.802769
-#ptable.update_total({'gas sg': 0.81}, reset=True)
-#ptable.update_total({'gas sg': 0.91}, reset=True)
+#ptable.update_total({'gas sg': 0.81}, recalc=True)
+#ptable.update_total({'gas sg': 0.91}, recalc=True)
 
 #ptable.update_total({'GHV_gas': 1325.1})
-#ptable.update_total({'GHV_liq': 51546}, reset=False)
+#ptable.update_total({'GHV_liq': 51546}, recalc=False)
 
 
 #ptable.update_total({'gas sg': 0.81})
 #ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
 
-#ptable.update_property('Hexanes+', {'gas sg': 3.1228}, reset=True)
+#ptable.update_property('Hexanes+', {'gas sg': 3.1228}, recalc=True)
 
 
 

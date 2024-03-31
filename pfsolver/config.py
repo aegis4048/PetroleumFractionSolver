@@ -16,6 +16,9 @@ GPA_table_column_mapping = {
 rounding_error_decimal_points = {
     'mw': 6,
 }
+settings = {
+    'warning': True,
+}
 
 
 def update_config(user_config):
@@ -24,5 +27,10 @@ def update_config(user_config):
     :param user_config: A dictionary containing configuration keys and their new values
     """
     constants.update(user_config)
+
+
+def update_settings(settings_dict):
+    global settings
+    settings.update(settings_dict)
 
 
