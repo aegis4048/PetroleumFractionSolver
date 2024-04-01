@@ -526,6 +526,7 @@ class Test_SCNProperty(unittest.TestCase):
             self.assertAlmostEqual(ptable3a.table.loc[idx_plusFrac, 'MW'], mw_from_update_property, places=1)
 
         """--------------------------- consecutive update test for update_total ---------------------------"""
+
         test_comp = {
             'methane': 50,
             'Test+': 50,
@@ -707,32 +708,49 @@ class Test_SCNProperty(unittest.TestCase):
         ptable5d.update_total({'MW': 120})
         self.assertAlmostEqual(ptable5d.table.loc[idx_heptanes, 'MW'], 391.4175, places=3)
 
-        # Todo: need testing for update_total recalc=True
-
+        """--------------------------- recalc testing ---------------------------"""
         ptable5e = PropertyTable(test, **{**kwargs})
         ptable5e.update_property('Hexanes+', {'MW': 87.665})
         ptable5e.update_property('Nonanes+', {'MW': 90})
         ptable5e.update_total({'MW': 100}, recalc=True)
+        idx_total = max(ptable5e.compound_indices_dict.values()) + 1
+        idx_heptanes = ptable5e.compound_indices_dict['Heptanes+']
+        ghv_gas_total = ptable5e.table.loc[idx_total, 'GHV_gas']
+        mw_heptanes = ptable5e.table.loc[idx_heptanes, 'MW']
+        self.assertAlmostEqual(mw_heptanes, 291.4175, places=3)
 
-        print(ptable5e.table.to_string())
-        print('--------------------------------------------')
+        ptable5e.update_total({'MW': 200}, recalc=False, warning=False)
+        ghv_gas_total_200_false = ptable5e.table.loc[idx_total, 'GHV_gas']
+        mw_heptanes_false = ptable5e.table.loc[idx_heptanes, 'MW']
+        self.assertAlmostEqual(ghv_gas_total, ghv_gas_total_200_false, places=3)
+        self.assertNotEqual(mw_heptanes, mw_heptanes_false)
+        self.assertAlmostEqual(mw_heptanes_false, 791.4175, places=3)
 
-        ptable5e.update_total({'MW': 200}, recalc=False)
+        ptable5e.update_total({'MW': 200}, recalc=True, warning=False)
+        ghv_gas_total_200_true = ptable5e.table.loc[idx_total, 'GHV_gas']
+        mw_heptanes_true = ptable5e.table.loc[idx_heptanes, 'MW']
+        self.assertNotEqual(ghv_gas_total, ghv_gas_total_200_true)
+        self.assertAlmostEqual(ghv_gas_total_200_true, 10777.928280, places=3)
+        self.assertNotEqual(mw_heptanes, mw_heptanes_true)
+        self.assertAlmostEqual(mw_heptanes_true, 791.4175, places=3)
 
-        print(ptable5e.table.to_string())
-        print('--------------------------------------------')
+        """--------------------------- warning testing ---------------------------"""
 
+        ptable6a = PropertyTable(test, **{**kwargs})
+        ptable6a.update_property('Hexanes+', {'MW': 87.665})
+        ptable6a.update_property('Nonanes+', {'MW': 90})
 
-        # Todo: need an example case where I can recalc all commpoudns individually one by one without re-calculating
+        with self.assertWarns(SCNPropertyWarning):
+            ptable6a.update_total({'MW': 300}, warning=True)
 
+        ptable6a.update_total({'MW': 301}, warning=True)
 
+        print(ptable6a.table.to_string())
 
+        # Todo: need an example case where I can recalc all compounds individually one by one without re-calculating
 
+        # Todo: change issue_unique warnings so that it works unique only for the 3 execution part
 
-
-        # ptable4a.update_total({'mw': mw_total}, **{**update_total_kwargs, 'target_compound': 'Hexanes+'})
-
-        #ptable4a.update_total({'mw': 25}, **{**update_total_kwargs, 'target_compound': 'Hexanes+'})
 
 
         # Todo: make a test case for unidentified compound - description for + fraction detection condition (+, plus)

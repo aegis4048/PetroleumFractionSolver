@@ -288,12 +288,7 @@ class PropertyTable(object):
         self.table_summary = None
         self.target_compound = None
 
-        if SCNProperty_kwargs is None:
-            self.SCNProperty_kwargs = {}
-        else:
-            self.SCNProperty_kwargs = SCNProperty_kwargs
-        self.SCNProperty_kwargs.setdefault('warning', self.warning)
-        self._validate_SCNProperty_kwargs()
+        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(SCNProperty_kwargs, warning)
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
@@ -305,7 +300,6 @@ class PropertyTable(object):
                        f"warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}" \
                        f"\nFrom: {self.__class__.__name__}"
                 utilities.issue_unique_warning(msgs, PropertyTableWarning)
-
 
         self.df_GPA = pd.read_feather(FEATHER_PATH)
         self.names = list(self.comp_dict.keys())
@@ -371,7 +365,12 @@ class PropertyTable(object):
         self._handle_summary()
         self._internal_update_property()
 
-    def _validate_SCNProperty_kwargs(self):
+    def _validate_SCNProperty_kwargs(self, SCNProperty_kwargs, warning):
+
+        if SCNProperty_kwargs is None:
+            none_dict = {}
+            none_dict.setdefault('warning', warning)
+            return none_dict
 
         constructor_signature = inspect.signature(SCNProperty.__init__)
         allowed_keys = [param.name for param in constructor_signature.parameters.values() if param.name != 'self']
@@ -383,13 +382,13 @@ class PropertyTable(object):
         prohibited_keys = []
 
         # Check for unexpected keywords
-        for key in self.SCNProperty_kwargs:
+        for key in SCNProperty_kwargs:
             if key not in allowed_keys:
                 unexpected_keys.append(f"'{key}'")
 
         # Check for the use of prohibited keywords
         for key in prohibited_keywords:
-            if key in self.SCNProperty_kwargs:
+            if key in SCNProperty_kwargs:
                 prohibited_keys.append(f"'{key}'")
 
         # If there are any unexpected or prohibited keywords, raise appropriate exceptions
@@ -399,6 +398,11 @@ class PropertyTable(object):
         if prohibited_keys:
             raise TypeError(f"The use of {', '.join(prohibited_keys)} is prohibited when provided as SCNProperty_kwargs. From: {self.__class__.__name__}")
 
+        if warning is not None:
+            SCNProperty_kwargs.setdefault('warning', warning)
+            SCNProperty_kwargs['warning'] = warning
+
+        return SCNProperty_kwargs
 
     def _map_input_to_key(self, user_input):
         user_input_lower = user_input.lower()
@@ -408,13 +412,17 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def update_total(self, props_dict, target_compound=None, recalc=True):
+    def update_total(self, props_dict, target_compound=None, recalc=True, summary=None, warning=None):
+
+        if summary is not None:
+            self.summary = summary
+        if warning is not None:
+            self.warning = warning
+        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(self.SCNProperty_kwargs, warning)
 
         if target_compound is not None:
             self.target_compound = target_compound
-        #else:
-        #    if self.target_compound is None:
-        #         pass
+
 
         # check if summary is true
         if not self.summary:
@@ -501,7 +509,13 @@ class PropertyTable(object):
             self.table.loc[max(self.compound_indices_dict.values()) + 1, column] = value
 
     # update directly from the user input
-    def update_property(self, name, props_dict, recalc=True):
+    def update_property(self, name, props_dict, recalc=True, summary=None, warning=None):
+
+        if summary is not None:
+            self.summary = summary
+        if warning is not None:
+            self.warning = warning
+        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(self.SCNProperty_kwargs, warning)
 
         self._validate_chemical_name(name)
 
@@ -520,9 +534,11 @@ class PropertyTable(object):
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
+        warnings.simplefilter('once')
         self._internal_update_property()
         self._internal_update_property()
         self._internal_update_property()
+        warnings.resetwarnings()
 
     def _validate_chemical_name(self, name):
         if name not in self.names:
