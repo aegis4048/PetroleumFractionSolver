@@ -8,11 +8,30 @@ import math
 import copy
 import os
 import inspect
+import contextlib
 
 from . import correlations
 from .customExceptions import SCNPropertyWarning, PropertyTableWarning
 from . import config
 from . import utilities
+
+
+@contextlib.contextmanager
+def suppress_duplicate_warnings():
+    seen_warnings = set()
+    original_showwarning = warnings.showwarning
+
+    def custom_showwarning(message, category, filename, lineno, file=None, line=None):
+        warning_key = (str(message), category, filename, lineno)
+        if warning_key not in seen_warnings:
+            seen_warnings.add(warning_key)
+            original_showwarning(message, category, filename, lineno, file, line)
+
+    warnings.showwarning = custom_showwarning
+    try:
+        yield
+    finally:
+        warnings.showwarning = original_showwarning
 
 
 UREG = pint.UnitRegistry()
@@ -282,7 +301,7 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=True, SCNProperty_kwargs=None):
+    def __init__(self, comp_dict, warning=True, summary=True, SCNProperty_kwargs=None):
 
         self.warning = None
         self.warning_msgs = []
@@ -294,7 +313,7 @@ class PropertyTable(object):
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
-            if self.warning:
+            if warning:
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
                 comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
                 msgs = f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been " \
@@ -503,11 +522,16 @@ class PropertyTable(object):
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
-        warnings.simplefilter('once')
-        self._internal_update_property()
-        self._internal_update_property()
-        self._internal_update_property()
-        warnings.resetwarnings()
+        #warnings.simplefilter('once')
+        #self._internal_update_property()
+        #self._internal_update_property()
+        #self._internal_update_property()
+        #warnings.resetwarnings()
+
+        with suppress_duplicate_warnings():
+            self._internal_update_property()
+            self._internal_update_property()
+            self._internal_update_property()
 
         # code to check if self.table.loc[max(self.compound_indices_dict.values()) + 1, column] is np.nan
         if pd.isna(self.table.loc[max(self.compound_indices_dict.values()) + 1, column]):
@@ -543,11 +567,17 @@ class PropertyTable(object):
 
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
-        warnings.simplefilter('once')
-        self._internal_update_property()
-        self._internal_update_property()
-        self._internal_update_property()
-        warnings.resetwarnings()
+        #warnings.simplefilter('once')
+        #self._internal_update_property()
+        #self._internal_update_property()
+        #self._internal_update_property()
+        #print(warnings.filters)
+        #warnings.resetwarnings()
+
+        with suppress_duplicate_warnings():
+            self._internal_update_property()
+            self._internal_update_property()
+            self._internal_update_property()
 
     def _validate_chemical_name(self, name):
         if name not in self.names:
@@ -744,7 +774,6 @@ class PropertyTable(object):
                                         f"To suppress this warning, set warning=False."
                                 #utilities.issue_unique_warning(msgs, PropertyTableWarning)
                                 warnings.warn(msgs, PropertyTableWarning)
-
                             calculated_value = None
 
                         if calculated_value is not None:

@@ -4,6 +4,7 @@ import random
 import numpy as np
 import pandas as pd
 import warnings
+import random
 
 sys.path.append('.')
 from pfsolver import PropertyTable, SCNProperty
@@ -736,12 +737,13 @@ class Test_SCNProperty(unittest.TestCase):
         with self.assertWarns(SCNPropertyWarning):
             ptable6a.update_total({'MW': 300}, warning=True)
 
+        # test for three executions of internal_property. Duplicate warnings should be suppressed
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
             ptable6a.update_total({'MW': 300}, warning=True)  # each execution should show 3 warnings for MW, Tb, sg_liq
             ptable6a.update_total({'MW': 300}, warning=True)
-            property_table_warnings = [warning for warning in caught_warnings if issubclass(warning.category, SCNPropertyWarning)]
-            self.assertEqual(len(property_table_warnings), 6, f"Expected 6 warnings, got {len(property_table_warnings)}")
+            scn_property_warnings = [warning for warning in caught_warnings if issubclass(warning.category, SCNPropertyWarning)]
+            self.assertEqual(len(scn_property_warnings), 6, f"Expected 6 warnings, got {len(scn_property_warnings)}")
 
         # warning kwargs in update_total should override the class level warning
         with self.assertWarns(SCNPropertyWarning):
@@ -759,24 +761,57 @@ class Test_SCNProperty(unittest.TestCase):
             scn_warnings = [w for w in caught_warnings if issubclass(w.category, SCNPropertyWarning)]
             self.assertEqual(len(scn_warnings), 0, "Expected no SCNPropertyWarning, but some were raised.")
 
+        # duplicate warning check for PropertyTableWarning when runtime error occurs due to sg_liq exceeding ~1.1 limits
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            ptable6a = PropertyTable(test, **kwargs)
+            ptable6a.update_property('Hexanes+', {'MW': 87.665})
+            ptable6a.update_property('Nonanes+', {'MW': 90})
+            ptable6a.update_property('Heptanes+', {'sg_liq': 95})
+            scn_property_warnings = [warning for warning in caught_warnings if
+                                     issubclass(warning.category, SCNPropertyWarning)]
+            property_table_warnings = [warning for warning in caught_warnings if
+                                     issubclass(warning.category, PropertyTableWarning)]
+            self.assertEqual(len(scn_property_warnings), 1,
+                             f"Expected 6 warnings, got {len(scn_property_warnings)}")
+            self.assertEqual(len(property_table_warnings), 1,
+                             f"Expected 6 warnings, got {len(property_table_warnings)}")
 
-        # Todo: class level warning is not needed, implement a version without it
+        # Testing for un-normalized composition warnings
+        test_comp = {
+            'methane': 50,
+            'ethane': 10,
+        }
+        with self.assertWarns(PropertyTableWarning):
+            PropertyTable(test_comp, **{**kwargs, 'warning': True})
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            PropertyTable(test_comp, **{**kwargs, 'warning': False})
+            self.assertEqual(len(caught_warnings), 0, "Expected no warning, but some were raised.")
 
-        print(ptable6a.table.to_string())
+        # Testing for un-normalized composition warnings
+
+        """--------------------------- normalization testing ---------------------------"""
+
+        keys = [
+            'hydrogen sulfide', 'nitrogen', 'carbon dioxide', 'methane', 'ethane',
+            'propane', 'isobutane', 'n-butane', 'i-pentane', 'n-pentane', 'Hexanes+'
+        ]
+        samples = [{key: random.uniform(0, 9999) for key in keys} for _ in range(100)]
+        for sample in samples:
+            normalized_frac = list(PropertyTable(sample, warning=False).comp_dict.values())
+            self.assertEqual(sum(normalized_frac), 1.0)
+        
+
+
 
         # Todo: need an example case where I can recalc all compounds individually one by one without re-calculating
-
-        # ptable6a.update_property('methane', {'MW': 90}, warning=True)
-
-
 
         # Todo: make a test case for unidentified compound - description for + fraction detection condition (+, plus)
 
 
         # Todo: add custom chemical name for n-heptane
 
-
-        # Todo: check again how GHV values of fractions are computed - GPA 2172 or ISO 6976 according to Promax
 
         # Todo: add Tb column on the returned DF, make the total Tb as NA because its essentially a bubble point
 
