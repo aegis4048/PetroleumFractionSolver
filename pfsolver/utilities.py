@@ -65,5 +65,6 @@ def check_ranges(target_dict, ref_dict, class_name=None, warning_obj=None):
             msg = f"{target_key} value {target_val} is out of recommended working range [{min_val}, {max_val}]. Set warning=False to suppress this warning."
             if class_name is not None:
                 msg += f" From: {class_name}"
-            issue_unique_warning(msg, warning_obj)
+            #issue_unique_warning(msg, warning_obj)
+            warnings.warn(msg, warning_obj)
 

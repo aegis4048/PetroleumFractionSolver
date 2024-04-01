@@ -216,7 +216,9 @@ class SCNProperty(object):
             if self.warning:
                 msgs = f"PNA composition failed to solve. Replacing with default xp={xp} (paraffin), " \
                        f"xn={xn} (naphthenic), and xa={xa} (aromatic). From: {self.__class__.__name__}"
-                utilities.issue_unique_warning(msgs, SCNPropertyWarning)
+                #utilities.issue_unique_warning(msgs, SCNPropertyWarning)
+
+                warnings.warn(msgs, SCNPropertyWarning)
 
 
         return xp, xn, xa
@@ -280,15 +282,15 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, summary=True, warning=True, SCNProperty_kwargs=None):
+    def __init__(self, comp_dict, summary=True, SCNProperty_kwargs=None):
 
-        self.warning = warning
+        self.warning = None
         self.warning_msgs = []
         self.summary = summary
         self.table_summary = None
         self.target_compound = None
 
-        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(SCNProperty_kwargs, warning)
+        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(SCNProperty_kwargs)
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
@@ -299,7 +301,8 @@ class PropertyTable(object):
                        f"normalized. To suppress this warning, replace with a normalized composition, Or set " \
                        f"warning=False.\nSuggested normalized dict:\n{comp_dict_formatted}" \
                        f"\nFrom: {self.__class__.__name__}"
-                utilities.issue_unique_warning(msgs, PropertyTableWarning)
+                #utilities.issue_unique_warning(msgs, PropertyTableWarning)
+                warnings.warn(msgs, PropertyTableWarning)
 
         self.df_GPA = pd.read_feather(FEATHER_PATH)
         self.names = list(self.comp_dict.keys())
@@ -365,11 +368,11 @@ class PropertyTable(object):
         self._handle_summary()
         self._internal_update_property()
 
-    def _validate_SCNProperty_kwargs(self, SCNProperty_kwargs, warning):
+    def _validate_SCNProperty_kwargs(self, SCNProperty_kwargs):
 
         if SCNProperty_kwargs is None:
             none_dict = {}
-            none_dict.setdefault('warning', warning)
+            none_dict.setdefault('warning', True)
             return none_dict
 
         constructor_signature = inspect.signature(SCNProperty.__init__)
@@ -398,9 +401,9 @@ class PropertyTable(object):
         if prohibited_keys:
             raise TypeError(f"The use of {', '.join(prohibited_keys)} is prohibited when provided as SCNProperty_kwargs. From: {self.__class__.__name__}")
 
-        if warning is not None:
-            SCNProperty_kwargs.setdefault('warning', warning)
-            SCNProperty_kwargs['warning'] = warning
+#        if warning is not None:
+#            SCNProperty_kwargs.setdefault('warning', warning)
+#            SCNProperty_kwargs['warning'] = warning
 
         return SCNProperty_kwargs
 
@@ -416,13 +419,16 @@ class PropertyTable(object):
 
         if summary is not None:
             self.summary = summary
+        else:
+            self.summary = True
         if warning is not None:
             self.warning = warning
-        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(self.SCNProperty_kwargs, warning)
+        else:
+            self.warning = True
+        self.SCNProperty_kwargs['warning'] = self.warning
 
         if target_compound is not None:
             self.target_compound = target_compound
-
 
         # check if summary is true
         if not self.summary:
@@ -463,7 +469,8 @@ class PropertyTable(object):
                                   f"It is recommended to explicitly set 'target_compound' from one of the followings to " \
                                   f"avoid this warning: {self.names_fraction}. Set warning=False to suppress this warning. " \
                                   f"From: {self.__class__.__name__}"
-                            utilities.issue_unique_warning(msg, PropertyTableWarning)
+                            #utilities.issue_unique_warning(msg, PropertyTableWarning)
+                            warnings.warn(msg, PropertyTableWarning)
 
                 else:
                     target_idx = self.compound_indices_dict[self.target_compound]
@@ -494,8 +501,6 @@ class PropertyTable(object):
             # _internal_update_property() triggers calculations only on cells with nan values
             self.table_.loc[target_idx, self.table_.columns.difference(excluded_cols)] = np.nan
 
-
-
         # three iterations are needed to calculate column properties from left to right
         # this should be fast because only the empty cells are calculated. Non-empty cells are skipped
         warnings.simplefilter('once')
@@ -510,12 +515,16 @@ class PropertyTable(object):
 
     # update directly from the user input
     def update_property(self, name, props_dict, recalc=True, summary=None, warning=None):
-
         if summary is not None:
             self.summary = summary
+        else:
+            self.summary = True
         if warning is not None:
             self.warning = warning
-        self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(self.SCNProperty_kwargs, warning)
+        else:
+            self.warning = True
+        self.SCNProperty_kwargs['warning'] = self.warning
+        #self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(self.SCNProperty_kwargs, self.warning)
 
         self._validate_chemical_name(name)
 
@@ -733,7 +742,8 @@ class PropertyTable(object):
                                     msgs += f" From: {self.__class__.__name__}"
                                 msgs += f"\nValue is set as NaN. Please check the input values and try again. " \
                                         f"To suppress this warning, set warning=False."
-                                utilities.issue_unique_warning(msgs, PropertyTableWarning)
+                                #utilities.issue_unique_warning(msgs, PropertyTableWarning)
+                                warnings.warn(msgs, PropertyTableWarning)
 
                             calculated_value = None
 

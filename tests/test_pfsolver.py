@@ -269,7 +269,6 @@ class Test_SCNProperty(unittest.TestCase):
         empty_cells = test_table1.isnull().any().any()
         self.assertFalse(empty_cells, "There should be no empty cells in the DataFrame")
 
-
     def test_PropertyTable(self):
 
         # default kwargs
@@ -282,18 +281,17 @@ class Test_SCNProperty(unittest.TestCase):
         }
         kwargs = {
             'summary': True,
-            'warning': True,
             'SCNProperty_kwargs': None,
         }
 
         # error triggered when wrong input keys for SCN_kwargs are used
         with self.assertRaises(TypeError):
-            PropertyTable(sample_1, summary=True, warning=True, SCNProperty_kwargs={**SCN_kwargs, 'asdasd': 200})
+            PropertyTable(sample_1, summary=True, SCNProperty_kwargs={**SCN_kwargs, 'asdasd': 200})
 
         # Tb, mw, sg values should not be provided as SCNProperty_kwargs because there can be multiple pseudos
         # The values for the pseudos are to be provided in other ways
         with self.assertRaises(TypeError):
-            PropertyTable(sample_1, summary=True, warning=True, SCNProperty_kwargs={**SCN_kwargs, 'Tb': 200})
+            PropertyTable(sample_1, summary=True, SCNProperty_kwargs={**SCN_kwargs, 'Tb': 200})
 
         # checking index of the plus fraction
         ptable1a = PropertyTable(sample_1a, **kwargs)
@@ -531,27 +529,21 @@ class Test_SCNProperty(unittest.TestCase):
             'methane': 50,
             'Test+': 50,
         }
-        ptable5a = PropertyTable(test_comp, **{**kwargs, 'warning': False})
+        #ptable5a = PropertyTable(test_comp, **{**kwargs, 'warning': False})
+        ptable5a = PropertyTable(test_comp, **kwargs)
         idx_test_plus = ptable5a.compound_indices_dict['Test+']
-        ptable5a.update_total({'mw': 23.396726})
+        ptable5a.update_total({'mw': 23.396726}, warning=False)
 
         self.assertAlmostEqual(ptable5a.table.loc[idx_test_plus, 'MW'], 30.750952, places=3)
         self.assertAlmostEqual(ptable5a.table.loc[idx_test_plus, 'GHV_gas'], 1782.391064, places=3)
 
-        ptable5b = PropertyTable(test_comp, **{**kwargs, 'warning': False})
-        ptable5b.update_total({'mw': 23.396726})
-        ptable5b.update_total({'mw': 50})
+        ptable5b = PropertyTable(test_comp, **kwargs)
+        ptable5b.update_total({'mw': 23.396726}, warning=False)
+        ptable5b.update_total({'mw': 50}, warning=False)
         self.assertEqual(ptable5b.target_compound, 'Test+')
         self.assertAlmostEqual(ptable5b.table.loc[idx_test_plus, 'MW'], 83.9575, places=3)
         self.assertAlmostEqual(ptable5b.table.loc[idx_test_plus, 'GHV_gas'], 4608.985487, places=3)
         self.assertAlmostEqual(ptable5b.table.loc[idx_test_plus + 1, 'MW'], 50, places=3)
-
-        """--------------------------- warning test ---------------------------"""
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            PropertyTable(test_comp, **{**kwargs, 'warning': False})
-            self.assertEqual(len(w), 0, "Expected no warnings, but some were raised.")
 
         """--------------------------- update_total tests with 2 properties ---------------------------"""
 
@@ -665,7 +657,7 @@ class Test_SCNProperty(unittest.TestCase):
             ptable5b.update_total({'mw': 110}, **{**update_total_kwargs})
 
         # 0 unknown - scneario 1
-        ptable5c = PropertyTable(test, **{**kwargs, 'warning': True})
+        ptable5c = PropertyTable(test, **kwargs)
         ptable5c.update_property('Hexanes+', {'MW': 87.665})
         ptable5c.update_property('Heptanes+', {'MW': 90})
         idx_total = max(ptable5c.compound_indices_dict.values()) + 1
@@ -685,16 +677,17 @@ class Test_SCNProperty(unittest.TestCase):
             idx_hexanes = ptable5c.compound_indices_dict['Hexanes+']
             self.assertAlmostEqual(ptable5c.table.loc[idx_hexanes, 'MW'], 886.943333, places=3)
 
-        # 0 unknown - scneario 1, warning=False
-        ptable5d = PropertyTable(test, **{**kwargs, 'warning': False})
+        # 0 unknown - scneario 1, warning should be triggered
+        ptable5d = PropertyTable(test, **kwargs)
         ptable5d.update_property('Hexanes+', {'MW': 87.665})
         ptable5d.update_property('Heptanes+', {'MW': 90})
-        ptable5d.update_total({'MW': 300})
+        with self.assertWarns(SCNPropertyWarning):
+            ptable5d.update_total({'MW': 300})
 
         # warning should not be triggered
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
-            ptable5d.update_total({'sg liq': 300})
+            ptable5d.update_total({'sg liq': 300}, warning=False)
             self.assertFalse(any(item.category == PropertyTableWarning for item in caught_warnings), "PropertyTableWarning was triggered but expected not to.")
             warnings.resetwarnings()
 
@@ -736,20 +729,44 @@ class Test_SCNProperty(unittest.TestCase):
 
         """--------------------------- warning testing ---------------------------"""
 
-        ptable6a = PropertyTable(test, **{**kwargs})
+        ptable6a = PropertyTable(test, **kwargs)
         ptable6a.update_property('Hexanes+', {'MW': 87.665})
         ptable6a.update_property('Nonanes+', {'MW': 90})
 
         with self.assertWarns(SCNPropertyWarning):
             ptable6a.update_total({'MW': 300}, warning=True)
 
-        ptable6a.update_total({'MW': 301}, warning=True)
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            ptable6a.update_total({'MW': 300}, warning=True)  # each execution should show 3 warnings for MW, Tb, sg_liq
+            ptable6a.update_total({'MW': 300}, warning=True)
+            property_table_warnings = [warning for warning in caught_warnings if issubclass(warning.category, SCNPropertyWarning)]
+            self.assertEqual(len(property_table_warnings), 6, f"Expected 6 warnings, got {len(property_table_warnings)}")
+
+        # warning kwargs in update_total should override the class level warning
+        with self.assertWarns(SCNPropertyWarning):
+            ptable6a.update_total({'MW': 300}, warning=True)
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            ptable6a.update_total({'MW': 300}, warning=False)
+            scn_warnings = [w for w in caught_warnings if issubclass(w.category, SCNPropertyWarning)]
+            self.assertEqual(len(scn_warnings), 0, "Expected no SCNPropertyWarning, but some were raised.")
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            ptable6a.update_property('Hexanes+', {'MW': 90}, warning=False)
+            scn_warnings = [w for w in caught_warnings if issubclass(w.category, SCNPropertyWarning)]
+            self.assertEqual(len(scn_warnings), 0, "Expected no SCNPropertyWarning, but some were raised.")
+
+
+        # Todo: class level warning is not needed, implement a version without it
 
         print(ptable6a.table.to_string())
 
         # Todo: need an example case where I can recalc all compounds individually one by one without re-calculating
 
-        # Todo: change issue_unique warnings so that it works unique only for the 3 execution part
+        # ptable6a.update_property('methane', {'MW': 90}, warning=True)
 
 
 
