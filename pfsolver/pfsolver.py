@@ -11,7 +11,7 @@ import inspect
 import contextlib
 
 from . import correlations
-from .customExceptions import SCNPropertyWarning, PropertyTableWarning
+from .customExceptions import SCNPropertyWarning, PropertyTableWarning, ThermoMissingValueWarning
 from . import config
 from . import utilities
 
@@ -303,7 +303,8 @@ class PropertyTable(object):
 
     def __init__(self, comp_dict, warning=True, summary=True, SCNProperty_kwargs=None):
 
-        self.warning = None
+        self.class_warning = warning  # this is for __init__ warnings and _get_properties_pure_compounds()
+        self.warning = None  # this is for methods like update_property() and update_total()
         self.warning_msgs = []
         self.summary = summary
         self.table_summary = None
@@ -313,7 +314,7 @@ class PropertyTable(object):
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
-            if warning:
+            if self.class_warning:
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())
                 comp_dict_formatted = f"{{\n{comp_dict_items}\n}}"
                 msgs = f"The sum of the composition is not 100 ({self.unnormalized_sum}). The composition has been " \
@@ -337,7 +338,9 @@ class PropertyTable(object):
 
         self.target_props = ['ghv', 'sg_liq_60F', 'sg_gas_60F', 'mw']  # reference to config.py GPA_table_column_mapping
         self.constants_pure = ChemicalConstantsPackage.constants_from_IDs(self.names_pure)
-        self._check_properties_exists()
+
+        # temporarily disabling this code, may active it later
+        #self._check_properties_exists()
 
         self.V_molar = utilities.ideal_gas_molar_volume()
 
@@ -861,23 +864,33 @@ class PropertyTable(object):
                         ghv_liq = Hc * mw
                         ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
                     elif Hc is None:
-                        raise ValueError(
-                            f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
+                        if self.class_warning:
+                            msg = f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]')." \
+                                  f" GHV_gas and GHV_liq are approximated." \
+                                  f"\nFrom: {self.__class__.__name__}"
+                            warnings.warn(msg, ThermoMissingValueWarning)
+                        ghv_ideal_gas = None
+                        ghv_liq = None
                     else:
                         ghv_ideal_gas = 0
                         ghv_liq = 0
 
             # chemical is NOT identified in the GPA datatable
             else:
-                if Hc != 0:
+                if Hc is None:
+                    if self.class_warning:
+                        msg = f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]')." \
+                              f" GHV_gas and GHV_liq are approximated." \
+                              f"\nFrom: {self.__class__.__name__}"
+                        warnings.warn(msg, ThermoMissingValueWarning)
+                    ghv_ideal_gas = None
+                    ghv_liq = None
+                elif Hc != 0:
                     ghv_ideal_gas = Hc / self.V_molar
                     ghv_ideal_gas = UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
                     ghv_liq = Hc * mw
                     ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
-                elif Hc is None:
-                    raise ValueError(
-                        f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
-                else:
+                else:  # inert compounds
                     ghv_ideal_gas = 0
                     ghv_liq = 0
 
@@ -902,6 +915,7 @@ class PropertyTable(object):
                 comp_dict_pure[key] = value
         return comp_dict_pure, comp_dict_fraction
 
+    # temporarily disabling this code, may active it later
     def _check_properties_exists(self):
         """
         :param constants: constants object of the thermo library
@@ -924,8 +938,11 @@ class PropertyTable(object):
                         f"Chemical name '{name}' is recognized but missing a required data ('MW, molecular weight [g/mol]'). From: {self.__class__.__name__}")
             if 'ghv' in self.target_props:
                 if Hc is None:
-                    raise ValueError(
-                        f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
+                    msg = f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}"
+                    warnings.warn(msg, ThermoMissingValueWarning)
+
+                    #raise ValueError(
+                    #    f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]'). From: {self.__class__.__name__}")
 
 
 brazos_gas = dict([

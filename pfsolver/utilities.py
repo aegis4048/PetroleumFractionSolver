@@ -52,7 +52,7 @@ def ideal_gas_molar_volume():
     R = 8.31446261815324 ((m^3-Pa)/(mol-K))
     T = 288.7056 K, 60F, standard temperature
     P = 101325 Pa, 1 atm, standard pressure
-    :return: ideal gas molar volume in a standard condition (m^3/mol)
+    :return: ideal gas molar volume in a standard condition (m^3/mol) = 0.023690421108823113
     """
     return CONSTANTS['R'] * CONSTANTS['T_STANDARD'] / CONSTANTS['P_STANDARD']
 

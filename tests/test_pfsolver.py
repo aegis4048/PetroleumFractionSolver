@@ -1,14 +1,21 @@
 import unittest
 import sys
-import random
+import pint
 import numpy as np
 import pandas as pd
 import warnings
 import random
+from scipy.optimize import newton
+from thermo import ChemicalConstantsPackage
 
 sys.path.append('.')
 from pfsolver import PropertyTable, SCNProperty
-from pfsolver.customExceptions import SCNPropertyWarning, PropertyTableWarning
+from pfsolver.customExceptions import SCNPropertyWarning, PropertyTableWarning, ThermoMissingValueWarning
+from pfsolver import correlations
+from pfsolver import utilities
+
+
+UREG = pint.UnitRegistry()
 
 
 #shamrock
@@ -789,7 +796,18 @@ class Test_SCNProperty(unittest.TestCase):
             PropertyTable(test_comp, **{**kwargs, 'warning': False})
             self.assertEqual(len(caught_warnings), 0, "Expected no warning, but some were raised.")
 
-        # Testing for un-normalized composition warnings
+        # heneicosane and docosane are recognized in Thermo but are missing Hc values needed for GHV calc.
+        test = {
+            'heneicosane': 30,
+            'docosane': 30,
+            'heptadecane': 40
+        }
+        with self.assertWarns(ThermoMissingValueWarning):
+            PropertyTable(test, **kwargs, warning=True)
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            PropertyTable(test, **kwargs, warning=False)
+            self.assertEqual(len(caught_warnings), 0, "Expected no warning, but some were raised.")
 
         """--------------------------- normalization testing ---------------------------"""
 
@@ -836,24 +854,98 @@ class Test_SCNProperty(unittest.TestCase):
         self.assertAlmostEqual(ptable7.table.loc[idx_total, 'MW'], 114.3064, places=3)
         self.assertAlmostEqual(ptable7.table.loc[idx_total, 'GHV_gas'], 5322.388471, places=3)
 
-        """--------------------------- test for unidentified compound ---------------------------"""
+        """--------------------------- test for identified but missing properties ---------------------------"""
+
+        # Heneicosane and docosane don't have Hc values, therefore GHV_gas is approximated with correlation
+        test = {
+            'heneicosane': 30,
+            'docosane': 30,
+            'heptadecane': 40
+        }
+        ptable8 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}}, warning=False)
+        heneicosane_idx = ptable8.compound_indices_dict['heneicosane']
+        docosane_idx = ptable8.compound_indices_dict['docosane']
+        heptadecane_idx = ptable8.compound_indices_dict['heptadecane']
+
+        heneicosane_mw = ptable8.table.loc[heneicosane_idx, 'MW']
+        docosane_mw = ptable8.table.loc[docosane_idx, 'MW']
+        heptadecane_mw = ptable8.table.loc[heptadecane_idx, 'MW']
+
+        xa_heneicosane = SCNProperty(mw=heneicosane_mw, model='kf').xa
+        xa_docosane = SCNProperty(mw=docosane_mw, model='kf').xa
+        xa_heptadecane = SCNProperty(mw=heptadecane_mw, model='kf').xa
+
+        ghv_heneicosane = newton(lambda ghv: correlations.mw_ghv(heneicosane_mw, ghv, xa_heneicosane), x0=15000)
+        ghv_docosane = newton(lambda ghv: correlations.mw_ghv(docosane_mw, ghv, xa_docosane), x0=15000)
+        ghv_heptadecane = newton(lambda ghv: correlations.mw_ghv(heptadecane_mw, ghv, xa_heptadecane), x0=15000)
+
+        self.assertAlmostEqual(ptable8.table.loc[heneicosane_idx, 'GHV_gas'], ghv_heneicosane, places=3)
+        self.assertAlmostEqual(ptable8.table.loc[docosane_idx, 'GHV_gas'], ghv_docosane, places=3)
+        self.assertNotAlmostEqual(ptable8.table.loc[heptadecane_idx, 'GHV_gas'], ghv_heptadecane, places=3)
+
+        """--------------------------- test for unidentified compounds ---------------------------"""
+
+        # refer to is_fraction() for detection conditions for plus fractions
+        test = {
+            'AA': 100
+        }
+        with self.assertRaises(ValueError):
+            PropertyTable(test, **kwargs)
+        test['AA+'] = test.pop('AA')
+        PropertyTable(test, **kwargs)
+        test['AAplus'] = test.pop('AA+')
+        PropertyTable(test, **kwargs)
+        test['AAPlus'] = test.pop('AAplus')
+        PropertyTable(test, **kwargs)
+        test['fraction'] = test.pop('AAPlus')
+        PropertyTable(test, **kwargs)
+        test['Fraction'] = test.pop('fraction')
+        PropertyTable(test, **kwargs)
+        test['fractions'] = test.pop('Fraction')
+        ptable9 = PropertyTable(test, **kwargs)
+        self.assertEqual(ptable9.names_fraction, ['fractions'])
+
+        """-------------------------- Test for GHVs of GPA values vs. Thermo Hcs --------------------------"""
+
+        # ensure that the GHV_gas calculated from Thermo's Hcs agree with GPA values within 3% tolerance
+        ptable10 = PropertyTable(sample_2)
+        ghvs_gpa = ptable10.table_['GHV_gas'].values
+
+        components = list(sample_2.keys())
+        for i, component in enumerate(components):
+            constants = ChemicalConstantsPackage.constants_from_IDs([component])
+            v_molar = utilities.ideal_gas_molar_volume()
+            Hc = constants.Hcs[0]
+            ghv_gas = Hc / v_molar
+            ghv_gas = UREG('%.15f joule/m^3' % ghv_gas).to('Btu/ft^3')._magnitude * -1
+            ghv_gas_gpa = ghvs_gpa[i]
+
+            value1 = ghv_gas
+            value2 = ghv_gas_gpa
+            tolerance = 0.03
+
+            self.assertTrue(value2 * (1 - tolerance) <= value1 <= value2 * (1 + tolerance))
+
+        """--------------------------- test for heavy components ---------------------------"""
+
 
         test = {
             'heneicosane': 30,
             'docosane': 30,
             'heptadecane': 40
         }
-        ptable8 = PropertyTable(test, **kwargs)
+        ptable10 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}}, warning=False)
 
-        print(ptable8.table.to_string())
+        print(ptable10.table.to_string())
 
+        # Todo: ptable10 = PropertyTable(sample_2, summary=False) this failed
 
+        # Todo: check validity of sg_liq and sg_gas for heavy components. Perhaps sg_liq needs to be reverse-calculated
+        #  with Pc, Tc and Tb correlations. For compounds
 
-        # Todo: make a test case for unidentified compound - description for + fraction detection condition (+, plus)
-
+        # Todo: Investigate COSTALD molar volume methods with Promax for sg_liq60 inconsistencies in heavy components.
 
         # Todo: add custom chemical name for n-heptane
-
 
         # Todo: add Tb column on the returned DF, make the total Tb as NA because its essentially a bubble point
 
