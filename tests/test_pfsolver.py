@@ -801,11 +801,53 @@ class Test_SCNProperty(unittest.TestCase):
         for sample in samples:
             normalized_frac = list(PropertyTable(sample, warning=False).comp_dict.values())
             self.assertEqual(sum(normalized_frac), 1.0)
-        
+
+        """--------------------------- test for changing known compound properties ---------------------------"""
+
+        test = {
+            'methane': 50,
+            'ethane': 10,
+            'Hexanes+': 30,
+            'Something+': 10,
+        }
+
+        # scenario 1: recalc = True
+        ptable7 = PropertyTable(test, **kwargs)
+        ptable7.update_property('Hexanes+', {'MW': 87.665})
+        ptable7.update_property('Something+', {'MW': 600})
+        idx_methane = ptable7.compound_indices_dict['methane']
+        idx_total = max(ptable7.compound_indices_dict.values()) + 1
+        self.assertAlmostEqual(ptable7.table.loc[idx_methane, 'MW'], 16.04245, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_methane, 'GHV_gas'], 1010.0, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'MW'], 97.32765, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'GHV_gas'], 5322.388471, places=3)
+        ptable7.update_property('methane', {'MW': 50}, warning=False)
+        self.assertEqual(ptable7.table.loc[idx_methane, 'MW'], 50)
+        self.assertAlmostEqual(ptable7.table.loc[idx_methane, 'GHV_gas'], 2900.394909, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'MW'], 114.3064, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'GHV_gas'], 6267.585926, places=3)
+
+        # scenario 2: recalc = False, the columns for the compound doesn't update. The total for the column updates tho.
+        ptable7 = PropertyTable(test, **kwargs)
+        ptable7.update_property('Hexanes+', {'MW': 87.665})
+        ptable7.update_property('Something+', {'MW': 600})
+        ptable7.update_property('methane', {'MW': 50}, warning=False, recalc=False)
+        self.assertAlmostEqual(ptable7.table.loc[idx_methane, 'GHV_gas'], 1010.0, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'MW'], 114.3064, places=3)
+        self.assertAlmostEqual(ptable7.table.loc[idx_total, 'GHV_gas'], 5322.388471, places=3)
+
+        """--------------------------- test for unidentified compound ---------------------------"""
+
+        test = {
+            'heneicosane': 30,
+            'docosane': 30,
+            'heptadecane': 40
+        }
+        ptable8 = PropertyTable(test, **kwargs)
+
+        print(ptable8.table.to_string())
 
 
-
-        # Todo: need an example case where I can recalc all compounds individually one by one without re-calculating
 
         # Todo: make a test case for unidentified compound - description for + fraction detection condition (+, plus)
 
