@@ -9,6 +9,7 @@ from scipy.optimize import newton
 from thermo import ChemicalConstantsPackage
 
 sys.path.append('.')
+
 from pfsolver import PropertyTable, SCNProperty
 from pfsolver.customExceptions import SCNPropertyWarning, PropertyTableWarning, ThermoMissingValueWarning
 from pfsolver import correlations
@@ -18,7 +19,7 @@ from pfsolver import utilities
 UREG = pint.UnitRegistry()
 
 
-#shamrock
+# shamrock
 sample_1 = dict([
     ('nitrogen', 0.86),
     ('carbon dioxide', 0.374),
@@ -394,6 +395,7 @@ class Test_SCNProperty(unittest.TestCase):
         self.assertAlmostEqual(ptable2.table.loc[idx_total, 'MW'], 40.680797, places=3)
 
         """------------------------- Test calculation priority for MW -------------------------"""
+
         # the values are computed in the orders of
         # list specified in _internal_update_property.rules.correlations.required_columns
         mw = 87.655
@@ -809,6 +811,17 @@ class Test_SCNProperty(unittest.TestCase):
             PropertyTable(test, **kwargs, warning=False)
             self.assertEqual(len(caught_warnings), 0, "Expected no warning, but some were raised.")
 
+        test_comp = {
+            'methane': 50,
+            'n-C50': 50,
+        }
+        with self.assertWarns(SCNPropertyWarning):
+            PropertyTable(test_comp, **{**kwargs, 'warning': True})
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            PropertyTable(test_comp, **{**kwargs, 'warning': False})
+            self.assertEqual(len(caught_warnings), 0, "Expected no warning, but some were raised.")
+
         """--------------------------- normalization testing ---------------------------"""
 
         keys = [
@@ -926,8 +939,10 @@ class Test_SCNProperty(unittest.TestCase):
 
             self.assertTrue(value2 * (1 - tolerance) <= value1 <= value2 * (1 + tolerance))
 
-        """--------------------------- test for heavy components ---------------------------"""
+        """--------------------------- test summary=False ---------------------------"""
+        # Todo: lets remove summary=False and instead add documentation for self.table, self.table_, and self.summary
 
+        """--------------------------- test for heavy components ---------------------------"""
 
         test = {
             'heneicosane': 30,
@@ -938,10 +953,25 @@ class Test_SCNProperty(unittest.TestCase):
 
         print(ptable10.table.to_string())
 
+        # Notes: The Tb values from Thermo seems to be reliable, agrees with Promax environtment
+        # Notes: Pc from Thermo is unreliable for heavies
+        # Notes: Promax Pc points for individual components seem to fluctuate up and down: C30~C33 confirmed
+
+        # Todo: check accuracy of the Tc values in Thermo. Construct a dict from GPA components, and compare the
+        #  Tcs side by side
+        # Todo: implement liquid_density_method options: COSTALD, Thermo
+        # Todo: think about how to implement GPA data override - Let's use GPA override only for GHV.
+
         # Todo: ptable10 = PropertyTable(sample_2, summary=False) this failed
+
+        # Todo: Check Billingsley and labm paper to check how Pc and Tc are calculated.
+        #  - This seems to be focused on mixture property and requires iterations.
+        #  - Not suitable for verifying single compound sg_liq
 
         # Todo: check validity of sg_liq and sg_gas for heavy components. Perhaps sg_liq needs to be reverse-calculated
         #  with Pc, Tc and Tb correlations. For compounds
+        #  The COSTALD rule works for individual components, agrees with GPA table
+        #  But the current mol-frac average SG_liq doesn't agree with Promax for combined mixture
 
         # Todo: Investigate COSTALD molar volume methods with Promax for sg_liq60 inconsistencies in heavy components.
 
@@ -949,10 +979,9 @@ class Test_SCNProperty(unittest.TestCase):
 
         # Todo: add Tb column on the returned DF, make the total Tb as NA because its essentially a bubble point
 
-
         # Todo: this column testing needs to be repeated for all test cases
-        # ensure that all numeric columns have dtype=float64
 
+        # ensure that all numeric columns have dtype=float64
         df2 = ptable2.table
         exclude_columns = ['Name', 'CAS']
         for column in df2.columns.difference(exclude_columns):

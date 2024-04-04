@@ -12,6 +12,10 @@ GPA_table_column_mapping = {
     'sg_liq_60F': 'Liq. Relative Density @60F:1atm',
     'sg_gas_60F': 'Ideal Gas Relative Density @60F:1atm',
     'mw': 'Molar Mass [g/mol]',
+    'Tb': 'Boiling T. [F]',
+    'Tc': 'Crit T. [F]',
+    'Pc': 'Crit. P. [psia]',
+    'omega': 'h',
 }
 rounding_error_decimal_points = {
     'mw': 6,

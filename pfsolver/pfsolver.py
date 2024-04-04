@@ -77,7 +77,7 @@ class SCNProperty(object):
             'model': ['kf', 'ra'],  # Katz & Firoozabadi (1978), Riazi & Al-Sahhaf (1996)
             'subtract': ['naphthenes', 'paraffins', 'aromatics'],
         }
-        self._validate_kwargs()
+        utilities.validate_kwargs(self.kwargs_options, self)
 
         default_guess = {'mw': 100, 'sg': 0.8, 'Tb': 600}
         self.init_guess = self._validate_return_kwargs_dict(default_guess, init_guess)
@@ -147,14 +147,6 @@ class SCNProperty(object):
                 class_name=self.__class__.__name__,
                 warning_obj=SCNPropertyWarning
             )
-
-    def _validate_kwargs(self):
-        for model_name, model_choices in self.kwargs_options.items():
-            user_choice = getattr(self, model_name)
-            if user_choice is None or user_choice not in model_choices:
-                user_choice_repr = f"'{user_choice}'" if isinstance(user_choice, str) else user_choice
-                raise ValueError(
-                    f"Invalid {model_name}: {user_choice_repr}. Valid options: {model_choices}. From: {self.__class__.__name__}")
 
     def _validate_return_kwargs_dict(self, default_guess, init_guess):
         if init_guess is not None:
@@ -301,16 +293,22 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, warning=True, summary=True, SCNProperty_kwargs=None):
+    def __init__(self, comp_dict, liquid_density_method='COSTALD', warning=True, summary=True, extended=False, SCNProperty_kwargs=None):
 
         self.class_warning = warning  # this is for __init__ warnings and _get_properties_pure_compounds()
-        self.warning = None  # this is for methods like update_property() and update_total()
-        self.warning_msgs = []
+        self.warning = None  # this is for methods like update_property() and update_total(), setting it None looks wrong but this is right
         self.summary = summary
+        self.extended = extended
         self.table_summary = None
         self.target_compound = None
+        self.liquid_density_method = liquid_density_method
 
         self.SCNProperty_kwargs = self._validate_SCNProperty_kwargs(SCNProperty_kwargs)
+
+        self.kwargs_options = {
+            'liquid_density_method': ['COSTALD', 'Thermo'],
+        }
+        utilities.validate_kwargs(self.kwargs_options, self)
 
         self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
@@ -344,8 +342,8 @@ class PropertyTable(object):
 
         self.V_molar = utilities.ideal_gas_molar_volume()
 
-        self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure = self._get_properties_pure_compounds()
-        self.ghvs_gas_fraction, self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction = [], [], [], [], [], []
+        self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure, self.Tbs_pure, self.Tcs_pure, self.Pcs_pure, self.omegas_pure = self._get_properties_pure_compounds()
+        self.ghvs_gas_fraction, self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction, self.Tbs_fraction, self.Tcs_fraction, self.Pcs_fraction, self.omegas_fraction = [], [] ,[], [], [], [], [], [], [], []
 
         # table without summary statistics line
         self.table_ = pd.DataFrame.from_dict({
@@ -359,6 +357,14 @@ class PropertyTable(object):
             'SG_gas': self.sgs_gas_pure.tolist() + [np.nan] * self.n_fraction,
             'SG_liq': self.sgs_liq_pure.tolist() + [np.nan] * self.n_fraction,
         })
+        if self.extended:
+            self.table_ = self.table_.assign(**{
+                'Tb': self.Tbs_pure.tolist() + [np.nan] * self.n_fraction,
+                'Tc': self.Tcs_pure.tolist() + [np.nan] * self.n_fraction,
+                'Pc': self.Pcs_pure.tolist() + [np.nan] * self.n_fraction,
+                'omega': self.omegas_pure.tolist() + [np.nan] * self.n_fraction,
+            })
+
         self.table_ = self.table_.set_index('Name').reindex(self.names).reset_index()  # reorder the table to match the input order for fractions
 
         #self.fraction_indices_dict = {item: idx for idx, item in enumerate(self.table_.Name) if is_fraction(item)}
@@ -376,6 +382,14 @@ class PropertyTable(object):
             'SG_gas': ['sg_gas', 'sg gas', 'gas sg', 'vapor sg', 'sg_vapor', 'sg vapor'],
             'SG_liq': ['sg_liq', 'sg liq', 'liq sg', 'liquid sg', 'sg_liquid', 'sg liquid'],
         }
+        if self.extended:
+            self.column_mapping.update({
+                'Tb': ['tb', 'boiling point', 'boiling temperature', 'boiling t', 'boiling temp', 'boiling_temperature', 'boiling_t', 'boiling_temp'],
+                'Tc': ['tc', 'critical temperature', 'critical t', 'critical temp', 'critical_temperature', 'critical_t', 'critical_temp'],
+                'Pc': ['pc', 'critical pressure', 'critical p', 'critical_pressure', 'critical_p'],
+                'omega': ['omega', 'acentric factor', 'acentricity', 'h', 'accentric', 'acentricity_factor'],
+            })
+
         self.summary_stats_method = {
             "Name": None,
             "CAS": None,
@@ -387,13 +401,20 @@ class PropertyTable(object):
             "SG_gas": 'mole_frac_mean',
             "SG_liq": 'mole_frac_mean',
         }
+        if self.extended:
+            self.summary_stats_method.update({
+                "Tb": None,
+                "Tc": None,
+                "Pc": None,
+                "omega": None,
+            })
         self._handle_summary()
         self._internal_update_property()
 
     def _validate_SCNProperty_kwargs(self, SCNProperty_kwargs):
 
         if SCNProperty_kwargs is None:
-            none_dict = {}
+            none_dict = {'warning': self.class_warning}
             none_dict.setdefault('warning', True)
             return none_dict
 
@@ -845,7 +866,22 @@ class PropertyTable(object):
         sgs_gas = []
         mws = []
 
-        for cas, name, Hc, mw, rhol_60F_mass in zip(self.constants_pure.CASs, self.constants_pure.names, self.constants_pure.Hcs, self.constants_pure.MWs, self.constants_pure.rhol_60Fs_mass):
+        Tbs = []
+        Tcs = []
+        Pcs = []
+        omegas = []
+
+        for i, (cas, name, Hc, mw, rhol_60F_mass, Tb, Tc, Pc, omega) in enumerate(zip(
+                self.constants_pure.CASs,
+                self.constants_pure.names,
+                self.constants_pure.Hcs,
+                self.constants_pure.MWs,
+                self.constants_pure.rhol_60Fs_mass,
+                self.constants_pure.Tbs,
+                self.constants_pure.Tcs,
+                self.constants_pure.Pcs,
+                self.constants_pure.omegas
+        )):
 
             matching_row = self.df_GPA[self.df_GPA['CAS'] == cas]
 
@@ -853,16 +889,18 @@ class PropertyTable(object):
             if not matching_row.empty:
                 ghv_ideal_gas = matching_row[MAPPING['ghv_gas']].iloc[0]
                 ghv_liq = matching_row[MAPPING['ghv_liq']].iloc[0]
-                sg_liq = matching_row[MAPPING['sg_liq_60F']].iloc[0]
-                sg_gas = matching_row[MAPPING['sg_gas_60F']].iloc[0]
-                mw = matching_row[MAPPING['mw']].iloc[0]
+                sg_liq = matching_row[MAPPING['sg_liq_60F']].iloc[0]  # no empty values in the GPA table
+                sg_gas = matching_row[MAPPING['sg_gas_60F']].iloc[0]  # no empty values in the GPA table
+                mw = matching_row[MAPPING['mw']].iloc[0]  # no empty values in the GPA table
+                Tb = matching_row[MAPPING['Tb']].iloc[0]  # isobutylcyclohexane, and ethyne are missing Tb data
+                Tc = matching_row[MAPPING['Tc']].iloc[0]  # no empty values in the GPA table
+                Pc = matching_row[MAPPING['Pc']].iloc[0]  # no empty values in the GPA table
+                omega = matching_row[MAPPING['omega']].iloc[0]  # isobutylcyclohexane is missing omega data
 
                 if pd.isna(ghv_ideal_gas):
                     if Hc != 0:  # GPA table is missing GHV_gas data for some compounds: 1-propyne
-                        ghv_ideal_gas = Hc / self.V_molar
-                        ghv_ideal_gas = UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
-                        ghv_liq = Hc * mw
-                        ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
+                        ghv_ideal_gas = self._calc_GHV_gas_from_mw(mw)
+                        ghv_liq = self._calc_GHV_liq_from_GHV_gas_MW(ghv_ideal_gas, mw)
                     elif Hc is None:
                         if self.class_warning:
                             msg = f"Chemical name '{name}' is recognized but missing a required data ('Hc, heat of combustion [J/mol]')." \
@@ -875,6 +913,22 @@ class PropertyTable(object):
                         ghv_ideal_gas = 0
                         ghv_liq = 0
 
+                if pd.isna(Tb):
+                    Tb = self.constants_pure.Tbs[i]
+                if pd.isna(Tc):
+                    Tc = self.constants_pure.Tcs[i]
+                    raise TypeError(f"Chemical name '{name}' is recognized but missing a required data ('Tc, critical "
+                                    f"temperature [F]'). This error should be not raised, please report this issue on "
+                                    f"github. From: {self.__class__.__name__}")
+                if pd.isna(Pc):
+                    Pc = self.constants_pure.Pcs[i]
+                    raise TypeError(f"Chemical name '{name}' is recognized but missing a required data ('Pc, critical "
+                                    f"pressure [psia]'). This error should be not raised, please report this issue on "
+                                    f"github. From: {self.__class__.__name__}")
+                if pd.isna(omega):
+                    omega = self.constants_pure.omegas[i]
+
+
             # chemical is NOT identified in the GPA datatable
             else:
                 if Hc is None:
@@ -886,24 +940,51 @@ class PropertyTable(object):
                     ghv_ideal_gas = None
                     ghv_liq = None
                 elif Hc != 0:
-                    ghv_ideal_gas = Hc / self.V_molar
-                    ghv_ideal_gas = UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
-                    ghv_liq = Hc * mw
-                    ghv_liq = UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
+                    ghv_ideal_gas = self._calc_GHV_gas_from_mw(mw)
+                    ghv_liq = self._calc_GHV_liq_from_GHV_gas_MW(ghv_ideal_gas, mw)
                 else:  # inert compounds
                     ghv_ideal_gas = 0
                     ghv_liq = 0
 
+                # Todo: add a warning for missing Tb, Tc, Pc, omega
+                if Tb is None:
+                    warnings.warn(f"Chemical name '{name}' is recognized but missing a required data ('Tb, normal "
+                                  f"boiling point [F]'). From: {self.__class__.__name__}", ThermoMissingValueWarning)
+                if Tc is None:
+                    warnings.warn(f"Chemical name '{name}' is recognized but missing a required data ('Tc, critical "
+                                  f"temperature [F]'). From: {self.__class__.__name__}", ThermoMissingValueWarning)
+                if Pc is None:
+                    warnings.warn(f"Chemical name '{name}' is recognized but missing a required data ('Pc, critical "
+                                  f"pressure [psia]'). From: {self.__class__.__name__}", ThermoMissingValueWarning)
+                if omega is None:
+                    warnings.warn(f"Chemical name '{name}' is recognized but missing a required data ('omega, acentric "
+                                  f"factor'). From: {self.__class__.__name__}", ThermoMissingValueWarning)
+
                 sg_liq = rhol_60F_mass / CONSTANTS['RHO_WATER']
                 sg_gas = mw / CONSTANTS['MW_AIR']
+                Tb = UREG('%.15f kelvin' % Tb).to('fahrenheit')._magnitude
+                Tc = UREG('%.15f kelvin' % Tc).to('fahrenheit')._magnitude
+                Pc = UREG('%.15f pascal' % Pc).to('psi')._magnitude
 
             ghvs_ideal_gas.append(ghv_ideal_gas)
             ghvs_liq.append(ghv_liq)
             sgs_liq.append(sg_liq)
             sgs_gas.append(sg_gas)
             mws.append(mw)
+            Tbs.append(Tb)
+            Tcs.append(Tc)
+            Pcs.append(Pc)
+            omegas.append(omega)
 
-        return np.array(ghvs_ideal_gas), np.array(ghvs_liq), np.array(sgs_liq), np.array(sgs_gas), np.array(mws)
+        return np.array(ghvs_ideal_gas), \
+            np.array(ghvs_liq), \
+            np.array(sgs_liq), \
+            np.array(sgs_gas), \
+            np.array(mws), \
+            np.array(Tbs), \
+            np.array(Tcs), \
+            np.array(Pcs), \
+            np.array(omegas)
 
     def _split_known_unknown(self):
         comp_dict_pure = {}
@@ -1008,95 +1089,11 @@ shamrock = dict([
 ])
 
 
-#df = SCNProperty.build_table([i for i in range(82, 94, 1)], warning=False, col='mw', output_keys=['mw', 'v100', 'v210', 'SUS_100', 'VGC'], model='kf')
-#df = SCNProperty.build_table([i for i in range(84, 94, 1)], col='mw', warning=True, model='kf')
-#print(df.to_string())
-
-
-# complete test scripts
-# ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': False, 'model': 'kf'})
-
-
-# Brazos Trees Gas
-#ptable = PropertyTable(brazos_gas, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
-#ptable.update_property('Hexanes+', {'GHV_liq': 20408})
-#ptable.update_property('Hexanes+', {'GHV_gas': 4849})
-#ptable.update_property('Hexanes+', {'liquid sg': 0.7142})
-#ptable.update_property('Hexanes+', {'gas sg': 3.1228})
-#ptable.update_property('Hexanes+', {'gas sg': 3.396934})
-#ptable.update_property('Hexanes+', {'mw': 86.161})  # 86.161
-#ptable.update_property('Hexanes+', {'liquid sg': 0.65})
-#ptable.update_property('Heptanes+', {'mw': 32.24})
-
-#ptable.update_total({'mw': 25.251}, target_compound='Hexanes+') #23.251, 23.323927
-#ptable.update_total({'mw': 25.251}, target_compound='Heptanes+')
-#ptable.update_total({'mw': 23.323927}) #23.251, 23.323927
-#ptable.update_total({'liquid sg': 0.3740})  #0.3740, 0.358661, the error
-#ptable.update_total({'liquid sg': 0.358661})
-#ptable.update_total({'gas sg': 0.8053})  # computed from C6+ mw=90.161 is 0.802769
-#ptable.update_total({'gas sg': 0.81}, recalc=True)
-#ptable.update_total({'gas sg': 0.91}, recalc=True)
-
-#ptable.update_total({'GHV_gas': 1325.1})
-#ptable.update_total({'GHV_liq': 51546}, recalc=False)
-
-
-#ptable.update_total({'gas sg': 0.81})
-#ptable.update_total({'gas sg': 0.81, 'mw': 113.7})
-
-#ptable.update_property('Hexanes+', {'gas sg': 3.1228}, recalc=True)
-
-
-
-
-# Todo: implement multiple inputs at one time scenario
-
-# ovintiv_tomlin
-#ptable = PropertyTable(ovintiv_tomlin, summary=True, warning=True)
-#ptable = PropertyTable(ovintiv_tomlin, summary=False, warning=True)
-
-# Shamrock
-# notes: make a note that total method is not recommended. It's extremely sensitive to error in inputs for all properties.
-
-
-#ptable = PropertyTable(shamrock, summary=True, warning=True, SCNProperty_kwargs={'warning': True, 'model': 'kf'})
-#ptable.update_property('Hexanes+', {'GHV_liq': 20677})
-#ptable.update_property('Hexanes+', {'GHV_gas': 4774})
-#ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
-#ptable.update_property('Hexanes+', {'gas sg': 3.0180})
-#ptable.update_property('Hexanes+', {'mw': 87.665})  # 87.665
-#ptable.update_total({'mw': 23.380})
-#ptable.update_total({'liquid sg': 0.3694})
-#ptable.update_total({'gas sg': 0.8054})
-#ptable.update_total({'GHV_gas': 1380})
-#ptable.update_total({'mw': 23.380, 'GHV_liq': 22402})
-
-# MW is required for GHV_liq calculation, this is a Todo
-
-#ptable.update_total({'GHV_liq': 22402, 'mw': 23.380})
-
-# ptable.update_property('Heptanes+', {'mw': 96.665})  # 87.665
-
-#ptable.update_property('Hexanes+', {'mw': 87.665, 'liquid sg': 0.6933})
-#ptable.update_property('Hexanes+', {'liquid sg': 0.6933, 'mw': 87.665})
-#ptable.update_property('Hexanes+', {'liquid sg': 0.6933})
-#ptable.update_property('Hexanes+', {'liquid sg': 0.6933, 'mw': 87.665})
-
-
-#ptable.update_property('Hexanes+', {'MW':90.161, 'GHV_gas': 5000})
-#ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})
-#ptable.update_property('Heptanes+', {'MW': 100.5, 'GHV_gas': 6000})
-
-#ptable.update_property('Hexanes+', {'GHV_liq': 20677})  # Brazos condensates
-#ptable.update_property('Hexanes+', {'GHV_liq': 20888, 'MW': 93.189})  # Brazos condensates
-#ptable.update_property('Hexanes+', {'GHV_gas': 5129})  # 6:3:1 Hexanes+
-#ptable.update_property('Hexanes+', {'GHV_gas': 4849})  # extended Hexanes+
-#ptable.update_property('Hexanes+', {'GHV_gas': 4774})  # extended Hexanes+ for Shamrock
-
-#ptable.update_property_total({'MW': 81.5})
-
-#ptable.update_property('Hexanes+', {'MW': 90.161, 'GHV_gas': 4849})  # Brazos gas
-#print(ptable.table.to_string())
+comp = {
+    'n-butane': 50,
+    'n-decane': 50
+}
+ptable = PropertyTable(comp)
 
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1

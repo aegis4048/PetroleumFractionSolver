@@ -6,6 +6,15 @@ CONSTANTS = config.constants
 ISSUED_WARNINGS_REGISTRY = set()
 
 
+def validate_kwargs(kwargs_options, obj):
+    for model_name, model_choices in kwargs_options.items():
+        user_choice = getattr(obj, model_name)
+        if user_choice is None or user_choice not in model_choices:
+            user_choice_repr = f"'{user_choice}'" if isinstance(user_choice, str) else user_choice
+            raise ValueError(
+                f"Invalid {model_name}: {user_choice_repr}. Valid options: {model_choices}. From: {obj.__class__.__name__}")
+
+
 def issue_unique_warning(message, warning_type=None):
     """
     Issues a warning if it hasn't been issued before.
@@ -24,6 +33,7 @@ def issue_unique_warning(message, warning_type=None):
 def handle_rounding_error(value, key):
     n = config.rounding_error_decimal_points[key]
     return round(value, n)
+
 
 def normalize_composition(comp_dict):
     """

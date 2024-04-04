@@ -320,6 +320,20 @@ def calc_PNA_comp(MW, VG, RI_intercept):
     return xp, xn, xa
 
 
+@respect_warnings
+def calc_ghv_gas_from_Hc(Hc):
+    V_molar = utilities.ideal_gas_molar_volume()
+    ghv_ideal_gas = Hc / V_molar
+    return UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
+
+
+@respect_warnings
+def calc_ghv_liq_from_mw_Hc(mw, Hc):
+    ghv_liq = Hc * mw
+    return UREG('%.15f joule/g' % ghv_liq).to('Btu/lb')._magnitude * -1
+
+
+
 
 
 """

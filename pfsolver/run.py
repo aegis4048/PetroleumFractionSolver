@@ -44,6 +44,12 @@ CONSTANTS = {
 }
 
 
+comp = {
+    'n-butane': 50,
+    'n-decane': 50
+}
+ptable = PropertyTable(comp)
+
 def ideal_gas_molar_volume():
  """
  PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
