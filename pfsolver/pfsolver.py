@@ -293,11 +293,10 @@ class SCNProperty(object):
 
 class PropertyTable(object):
 
-    def __init__(self, comp_dict, liquid_density_method='COSTALD', warning=True, summary=True, extended=False, SCNProperty_kwargs=None):
+    def __init__(self, comp_dict, liquid_density_method='COSTALD', warning=True, extended=False, SCNProperty_kwargs=None):
 
         self.class_warning = warning  # this is for __init__ warnings and _get_properties_pure_compounds()
         self.warning = None  # this is for methods like update_property() and update_total(), setting it None looks wrong but this is right
-        self.summary = summary
         self.extended = extended
         self.table_summary = None
         self.target_compound = None
@@ -458,12 +457,8 @@ class PropertyTable(object):
         raise ValueError(f"Invalid column name: '{user_input}'. Valid options are "
                          f"{self.column_mapping.keys()}. From: {self.__class__.__name__}")
 
-    def update_total(self, props_dict, target_compound=None, recalc=True, summary=None, warning=None):
+    def update_total(self, props_dict, target_compound=None, recalc=True, warning=None):
 
-        if summary is not None:
-            self.summary = summary
-        else:
-            self.summary = True
         if warning is not None:
             self.warning = warning
         else:
@@ -472,10 +467,6 @@ class PropertyTable(object):
 
         if target_compound is not None:
             self.target_compound = target_compound
-
-        # check if summary is true
-        if not self.summary:
-            raise ValueError(f"Summary is set to False. Set summary=True to use this method. From: {self.__class__.__name__}")
 
         excluded_cols = ['Name', 'CAS', 'Mole_Fraction']
         # code to update column value of table_summary with chemical_name as column name. table_summary is always a 1 row df.
@@ -562,11 +553,8 @@ class PropertyTable(object):
             self.table.loc[max(self.compound_indices_dict.values()) + 1, column] = value
 
     # update directly from the user input
-    def update_property(self, name, props_dict, recalc=True, summary=None, warning=None):
-        if summary is not None:
-            self.summary = summary
-        else:
-            self.summary = True
+    def update_property(self, name, props_dict, recalc=True, warning=None):
+
         if warning is not None:
             self.warning = warning
         else:
@@ -744,12 +732,9 @@ class PropertyTable(object):
         return summary_df
 
     def _handle_summary(self):
-        if self.summary:
-            self.table_summary = self._calc_summary()
-            warnings.simplefilter(action='ignore', category=FutureWarning)
-            self.table = pd.concat([self.table_, self.table_summary])
-        else:
-            self.table = self.table_
+        self.table_summary = self._calc_summary()
+        warnings.simplefilter(action='ignore', category=FutureWarning)
+        self.table = pd.concat([self.table_, self.table_summary])
 
     def _handle_correlation_method(self, property, method_details):
         for idx, row in self.table_.iterrows():
@@ -1098,3 +1083,6 @@ ptable = PropertyTable(comp)
 # Todo: Write example run for ovintiv tomlin by defining the 4 pseudos
 # Todo: Do StateCordell, which explicitly shows 6:3:1
 # Todo: make dictionary objects for each of Plus fraction, and total properties
+
+# Todo: make attribute "self.units" with dict like {'Tb': ['F', 'K', 'C'], ...} and trigger re_calc
+#   when the attribute is updated. Also run _validate_kwargs() on self.units

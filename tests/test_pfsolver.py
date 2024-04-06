@@ -289,7 +289,6 @@ class Test_SCNProperty(unittest.TestCase):
             'warning': True
         }
         kwargs = {
-            'summary': True,
             'SCNProperty_kwargs': None,
         }
 
@@ -496,11 +495,20 @@ class Test_SCNProperty(unittest.TestCase):
         self.assertAlmostEqual(test_table.table.loc[idx_total, 'SG_liq'], 0.67556, places=3)
         self.assertAlmostEqual(test_table.table.loc[idx_total, 'GHV_gas'], 5129.22, places=3)
 
+        """--------------------------- Ambient air test ---------------------------"""
+
         # Properties of ambient air MW = 28.9625. Composition originate from Table A.1 of GPA 2172-19
         # Demonstration to show that the library supports non-GPA 2145 components as well
-        air_table = PropertyTable(air, **kwargs)
+        air_table = PropertyTable(air, **{**kwargs, 'warning': False})
         idx_total = max(air_table.compound_indices_dict.values()) + 1
         self.assertAlmostEqual(air_table.table.loc[idx_total, 'MW'], 28.962562, places=3)
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            PropertyTable(air, **{**kwargs, 'warning': False})
+            self.assertEqual(len(caught_warnings), 0)
+        with self.assertWarns(SCNPropertyWarning):
+            PropertyTable(air, **{**kwargs, 'warning': True})
 
         """--------------------------- update_total tests with 1 property ---------------------------"""
 
@@ -894,7 +902,7 @@ class Test_SCNProperty(unittest.TestCase):
 
         self.assertAlmostEqual(ptable8.table.loc[heneicosane_idx, 'GHV_gas'], ghv_heneicosane, places=3)
         self.assertAlmostEqual(ptable8.table.loc[docosane_idx, 'GHV_gas'], ghv_docosane, places=3)
-        self.assertNotAlmostEqual(ptable8.table.loc[heptadecane_idx, 'GHV_gas'], ghv_heptadecane, places=3)
+        self.assertAlmostEqual(ptable8.table.loc[heptadecane_idx, 'GHV_gas'], ghv_heptadecane, places=3)
 
         """--------------------------- test for unidentified compounds ---------------------------"""
 
@@ -952,6 +960,9 @@ class Test_SCNProperty(unittest.TestCase):
         ptable10 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}}, warning=False)
 
         print(ptable10.table.to_string())
+
+        # Todo: CONCLUSION - Thermo database properties are unreliable. Need to extract properties from Yaws book.
+        #  This will be a long-term project, so just leave it as is for now and focus on publishing the article
 
         # Notes: The Tb values from Thermo seems to be reliable, agrees with Promax environtment
         # Notes: Pc from Thermo is unreliable for heavies

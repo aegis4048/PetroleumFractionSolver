@@ -44,7 +44,9 @@ names = ['n-C6', 'n-C7', 'n-C8', 'n-C9', 'n-C10',
  'n-C31', 'n-C32', 'n-C33', 'n-C34', 'n-C35', 'n-C36', 'n-C37', 'n-C38', 'n-C39', 'n-C40',
  'n-C41', 'n-C42', 'n-C43', 'n-C44', 'n-C45', 'n-C46', 'n-C47', 'n-C48', 'n-C49', 'n-C50']
 
-# names = ['n-C16', 'n-C17', 'n-C18', 'n-C19']
+names = ['n-C16', 'n-C17', 'n-C18', 'n-C19']
+names = ['n-C6', 'n-C7', 'n-C29', 'n-C30',
+ 'n-C31', 'n-C32', 'n-C49', 'n-C50']
 
 # Since you want the sum of values to equal 1, each component will have an equal share of 1/total_components
 value_per_comp = 1 / len(names)
@@ -54,6 +56,8 @@ comp = {name: value_per_comp for name in names}
 ptable = pfsolver.PropertyTable(comp, warning=False, extended=True)
 print(ptable.SCNProperty_kwargs)
 print(ptable.table.to_string())
+
+chemicals.acentric.omega('630-04-6', method=None)
 
 names = ['n-C6', 'n-C7', 'n-C29', 'n-C30',
  'n-C31', 'n-C32', 'n-C49', 'n-C50']
@@ -75,7 +79,11 @@ for i, name in enumerate(names):
     print('-----------------------------------------------')
 """
 
-"""
+
+names = ['n-C6', 'n-C7', 'n-C29', 'n-C30',
+ 'n-C31', 'n-C32', 'n-C49', 'n-C50']
+constants = ChemicalConstantsPackage.constants_from_IDs(names)
+
 for i, name in enumerate(names):
     print(name, ':', constants.names[i])
     print('\tTc:', constants.Tcs[i])
@@ -84,7 +92,7 @@ for i, name in enumerate(names):
     print('\tomega:', constants.omegas[i])
     print('\trhol_60Fs_mass:', round(constants.rhol_60Fs_mass[i], 1))
     print('-----------------------------------------------')
-"""
+
 
 
 """
