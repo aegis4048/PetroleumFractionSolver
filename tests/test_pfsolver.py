@@ -957,27 +957,27 @@ class Test_SCNProperty(unittest.TestCase):
             'docosane': 30,
             'heptadecane': 40
         }
-        ptable10 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}}, warning=False)
+        ptable10 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}},
+                                 warning=False, extended=True)
+
+        #print(ptable10.table.to_string())
+
+        test = {
+            'n-decane': 50,
+            'propane': 50,
+        }
+        ptable10 = PropertyTable(test, **{**kwargs, 'SCNProperty_kwargs': {'model': 'kf'}},
+                                 warning=False, extended=True)
 
         print(ptable10.table.to_string())
 
         # Todo: CONCLUSION - Thermo database properties are unreliable. Need to extract properties from Yaws book.
         #  This will be a long-term project, so just leave it as is for now and focus on publishing the article
 
-        # Notes: The Tb values from Thermo seems to be reliable, agrees with Promax environtment
-        # Notes: Pc from Thermo is unreliable for heavies
-        # Notes: Promax Pc points for individual components seem to fluctuate up and down: C30~C33 confirmed
+        # Todo: liquid density calculation is not accurate for light-end (n-butane and lower).
+        #  Promax values and GPA values are not matching. But they match for n-pentane and higher.
 
-        # Todo: check accuracy of the Tc values in Thermo. Construct a dict from GPA components, and compare the
-        #  Tcs side by side
         # Todo: implement liquid_density_method options: COSTALD, Thermo
-        # Todo: think about how to implement GPA data override - Let's use GPA override only for GHV.
-
-        # Todo: ptable10 = PropertyTable(sample_2, summary=False) this failed
-
-        # Todo: Check Billingsley and labm paper to check how Pc and Tc are calculated.
-        #  - This seems to be focused on mixture property and requires iterations.
-        #  - Not suitable for verifying single compound sg_liq
 
         # Todo: check validity of sg_liq and sg_gas for heavy components. Perhaps sg_liq needs to be reverse-calculated
         #  with Pc, Tc and Tb correlations. For compounds

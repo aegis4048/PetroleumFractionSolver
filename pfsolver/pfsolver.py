@@ -845,6 +845,8 @@ class PropertyTable(object):
         :param GPA_data: pandas dataframe of the GPA 2145-16 Table
         :return:
         """
+        # Todo: This section needs upgrade later when YAWS properties method are added
+
         ghvs_ideal_gas = []
         ghvs_liq = []
         sgs_liq = []
@@ -874,7 +876,9 @@ class PropertyTable(object):
             if not matching_row.empty:
                 ghv_ideal_gas = matching_row[MAPPING['ghv_gas']].iloc[0]
                 ghv_liq = matching_row[MAPPING['ghv_liq']].iloc[0]
+
                 sg_liq = matching_row[MAPPING['sg_liq_60F']].iloc[0]  # no empty values in the GPA table
+
                 sg_gas = matching_row[MAPPING['sg_gas_60F']].iloc[0]  # no empty values in the GPA table
                 mw = matching_row[MAPPING['mw']].iloc[0]  # no empty values in the GPA table
                 Tb = matching_row[MAPPING['Tb']].iloc[0]  # isobutylcyclohexane, and ethyne are missing Tb data
@@ -953,7 +957,10 @@ class PropertyTable(object):
 
             ghvs_ideal_gas.append(ghv_ideal_gas)
             ghvs_liq.append(ghv_liq)
+
             sgs_liq.append(sg_liq)
+            #sgs_liq.append(rhol_60F_mass / CONSTANTS['RHO_WATER'])
+
             sgs_gas.append(sg_gas)
             mws.append(mw)
             Tbs.append(Tb)

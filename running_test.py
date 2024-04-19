@@ -11,9 +11,11 @@ import copy
 import timeit
 
 import pfsolver
+from pfsolver import PropertyTable
+from pfsolver import config
 
 
-UREG = pint.UnitRegistry()
+UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
 
 
 comp = {
@@ -54,8 +56,6 @@ value_per_comp = 1 / len(names)
 # Create a dictionary with each compound name as a key and the value_per_comp as the value
 comp = {name: value_per_comp for name in names}
 ptable = pfsolver.PropertyTable(comp, warning=False, extended=True)
-print(ptable.SCNProperty_kwargs)
-print(ptable.table.to_string())
 
 chemicals.acentric.omega('630-04-6', method=None)
 
@@ -79,21 +79,78 @@ for i, name in enumerate(names):
     print('-----------------------------------------------')
 """
 
+names = ['methane', 'n-C6', 'n-C7', 'n-C29', 'n-C30',
+ 'n-C31', 'n-C32', 'n-C33', 'n-C49', 'n-C50']
 
-names = ['n-C6', 'n-C7', 'n-C29', 'n-C30',
- 'n-C31', 'n-C32', 'n-C49', 'n-C50']
+print('-----------------------------------------------')
+test = {'n-decane': 50, 'n-nonane': 50,}
+test = {'n-decane': 50, 'n-hexane': 30, 'n-pentane': 10, 'n-butane': 5, 'methane': 5}
+
+test = {'n-decane': 50, 'n-butane': 50}
+names = list(test.keys())
 constants = ChemicalConstantsPackage.constants_from_IDs(names)
+Vs = COSTALD_mixture(list(test.values()), 288.7, constants.Tcs, constants.Vcs, constants.omegas)
+
+MW_mix = np.sum(np.array(constants.MWs) * np.array(list(test.values())) / 100)
+sg = Vm_to_rho(Vs, float(MW_mix))
+
+print('Vs:', Vs)
+print('MW_mix:', MW_mix)
+print('sg:', sg)
+
+test = {'methane': 5, 'ethane': 5, 'propane': 5, 'n-butane': 5,
+        'n-pentane': 10, 'n-hexane': 30, 'n-decane': 40}
+
+names = list(test.keys())
+constants = ChemicalConstantsPackage.constants_from_IDs(names)
+bubble_Ts = {'methane': 111.68, 'ethane': 184.68, 'propane': 231.21, 'n-butane': 272.74,
+        'n-pentane': 288.7, 'n-hexane': 288.7, 'n-decane': 288.7}
 
 for i, name in enumerate(names):
-    print(name, ':', constants.names[i])
-    print('\tTc:', constants.Tcs[i])
-    print('\tPc:', constants.Pcs[i])
-    print('\tVc:', constants.Vcs[i])
+    print(name, '------------------------------')
+    print('\tsg:', round(constants.rhol_60Fs_mass[i] / config.constants['RHO_WATER'], 3))
+
+    sg_COSTALD_bubble_T = Vm_to_rho(COSTALD(list(bubble_Ts.values())[i], constants.Tcs[i], constants.Vcs[i], constants.omegas[i]), constants.MWs[i])
+    sg_COSTALD_60F = Vm_to_rho(COSTALD(288.7, constants.Tcs[i], constants.Vcs[i], constants.omegas[i]), constants.MWs[i])
+
+    print('\tsg-COSTALD @BubbleT:', round(sg_COSTALD_bubble_T, 1))
+    print('\tsg-COSTALD @60F:', round(sg_COSTALD_60F, 1))
+
+    #print('\tTr:', round(288.7 / constants.Tcs[i], 3))
+    print('\tTb:', round(UREG('%.15f kelvin' % constants.Tbs[i]).to('fahrenheit')._magnitude, 1), 'F')
+    print('\tTc:', round(UREG('%.15f kelvin' % constants.Tcs[i]).to('celsius')._magnitude, 1), 'C')
+    print('\tPc:', round(UREG('%.15f pascal' % constants.Pcs[i]).to('atm')._magnitude, 1), 'atm')
+    print('\tVc:', '%s' % float('%.3g' % constants.Vcs[i]), 'm^3/mol')
+    print('\tVc:', '%s' % float('%.3g' % (constants.Vcs[i] / constants.MWs[i] / 1000)), 'm^3/kg')
     print('\tomega:', constants.omegas[i])
-    print('\trhol_60Fs_mass:', round(constants.rhol_60Fs_mass[i], 1))
-    print('-----------------------------------------------')
+    #print('\trhol_60Fs_mass:', round(constants.rhol_60Fs_mass[i], 1))
+    #print('\tdensity:', constants.rhol_60Fs_mass[i] / config.constants['RHO_WATER'])
+    #print('-----------------------------------------------')
 
 
+ptable10 = PropertyTable(test, warning=True, extended=True)
+#ptable10.update_property('n-butane', {'SG_liq': 0.64587})
+
+print(ptable10.table.to_string())
+
+# methane
+A = 0.1627
+B = 0.29337
+C = 190.56
+n = 0.28571
+T = 111.67
+
+# C33 Tritriacontane
+A = 0.2591
+B = 0.24875
+C = 946.27
+n = 0.28571
+T = 288.7
+
+density = A * B ** -((1 - T/C) ** n)
+print('methane density:', density)
+
+# methane density in Promax = 0.4232 at -256.7 F.
 
 """
 constants = ChemicalConstantsPackage.constants_from_IDs(['n-butane'])
@@ -118,8 +175,42 @@ mw / V_s / 1000
 
 """
 
+constants = ChemicalConstantsPackage.constants_from_IDs(['n-butane'])
+rhol_60F = constants.rhol_60Fs_mass[0]
+sg = rhol_60F / config.constants['RHO_WATER']
+print(sg)
+
+# butane properties
+name = 'tritriacontane'
+constants = ChemicalConstantsPackage.constants_from_IDs([name])
+T = 288.7
+Tc = constants.Tcs[0]
+Vc = constants.Vcs[0]
+omega = constants.omegas[0]
+Vs = chemicals.volume.COSTALD(T, Tc, Vc, omega)
+
+print('-----------------------------------------------')
+rho = chemicals.utils.Vm_to_rho(Vs, constants.MWs[0])
+print('name:  ', name)
+print('rho:   ', rho)
+print('Tc:    ', Tc)
+print('omega: ', omega)
+
+# Todo: Test COSTALD density method for HCs lighter than n-C5 to test sg_liq.
+
+# Notes: SG_liq values from GPA is not reliable. Promax seems to agree more with Pubchem values
 
 
+# Todo: This code returns NaN for n-butane because I changed sg_liq values. This shouldn't happen. Fix it.
+"""
+test = {'n-decane': 50, 'n-butane': 50,}
+ptable10 = PropertyTable(test, warning=True, extended=True)
+ptable10.update_property('n-butane', {'SG_liq': 0.64587})
+"""
+
+
+# Todo: https://wiki.whitson.com/eos/bips/
+#  Make BIPS tunable to match experimental data for reservoir sim.
 
 
 
