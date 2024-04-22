@@ -10,6 +10,180 @@ from pfsolver import config
 UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
 
 
+class calculatorPR:
+    @staticmethod
+    def calc_Tr(T, Tc):
+        return T / Tc
+
+    @staticmethod
+    def calc_a(Tc, Pc):
+        return 0.45724 * (config.constants['R'] ** 2) * (Tc ** 2) / Pc
+
+    @staticmethod
+    def calc_b(Tc, Pc):
+        return 0.07780 * config.constants['R'] * Tc / Pc
+
+    @staticmethod
+    def calc_kappa(omega):
+        return 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
+
+    @staticmethod
+    def calc_alpha(kappa, Tr):
+        return (1 + kappa * (1 - np.sqrt(Tr))) ** 2
+
+    @staticmethod
+    def calc_a_alpha(a, alpha):
+        return a * alpha
+
+    @staticmethod
+    def calc_A(a_alpha, T, P):
+        return a_alpha * P / (config.constants['R'] ** 2 * T ** 2)
+
+    @staticmethod
+    def calc_B(b, T, P):
+        return b * P / (config.constants['R'] * T)
+
+    @staticmethod
+    def calc_V_liq(Z_liq, T, P):
+        return Z_liq * config.constants['R'] * T / P  # m^3/mol
+
+    @staticmethod
+    def calc_V_gas(Z_gas, T, P):
+        return Z_gas * config.constants['R'] * T / P  # m^3/mol
+
+    @staticmethod
+    def solve_cubic(A, B):
+        # Coefficients of the cubic equation
+        coeffs = [1, -(1 - B), A - 3 * B ** 2 - 2 * B, -(A * B - B ** 2 - B ** 3)]
+        return np.roots(coeffs)
+
+    @staticmethod
+    def Z_obj_func(Z, A, B):
+        return Z ** 3 - (1 - B) * Z ** 2 + (A - 2 * B - 3 * B ** 2) * Z - (
+                A * B - B ** 2 - B ** 3)
+
+    @staticmethod
+    def calc_rho_liq(mw, V_liq):
+        return mw / V_liq  # g/m^3  # g/m^3
+
+    @staticmethod
+    def calc_rho_gas(mw, V_gas):
+        return mw / V_gas  # g/m^3
+
+
+class calculatorPR78(calculatorPR):
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def calc_kappa(omega):
+        if omega <= 0.491:
+            kappa = 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
+        else:
+            kappa = 0.379642 + 1.48503 * omega - 0.164423 * omega ** 2 + 0.016666 * omega ** 3
+        return kappa
+
+
+class calculatorPRMIX(calculatorPR):
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def calc_a_alpha(zs, ais_alphas):
+        a_alpha = 0
+        for i in range(len(zs)):
+            for j in range(len(zs)):
+                a_alpha += zs[i] * zs[j] * (ais_alphas[i] * ais_alphas[j]) ** 0.5
+        return a_alpha
+
+    @staticmethod
+    def calc_b(zs, Tcs, Pcs):
+        bis = calculatorPR.calc_b(Tcs, Pcs)
+        b = 0
+        for i in range(len(zs)):
+            b += zs[i] * bis[i]
+        return b
+
+    @staticmethod
+    def calc_kappas(omegas):
+        kappas = []
+        for omega in omegas:
+            kappa = 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
+            kappas.append(kappa)
+        return kappas
+
+
+class calculatorPRMIX78(calculatorPRMIX):
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def calc_kappas(omegas):
+        kappas = []
+        for omega in omegas:
+            if omega <= 0.491:
+                kappa = 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
+            else:
+                kappa = 0.379642 + 1.48503 * omega - 0.164423 * omega ** 2 + 0.016666 * omega ** 3
+            kappas.append(kappa)
+        return kappas
+
+
+def setbold(txt):
+    return ' '.join([r"$\bf{" + item + "}$" for item in txt.split(' ')])
+
+
+def plot_Z(x, y, roots, roots_real, T, P, eos_name):
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    ax.plot(x, y, label='f(Z)', color='k')
+    ax.axhline(0, color='r', label='y=0')
+    for i in range(len(roots)):
+        real_part = roots[i].real
+        imag_part = roots[i].imag
+
+        if np.abs(imag_part) < 1e-5:
+            label = 'root = %.3f' % real_part
+        else:
+            sign = '+' if imag_part > 0 else '-'
+            label = f"root(i) = {real_part:.3f}{sign}j{np.abs(imag_part):.3f}"
+
+        ax.axvline(roots_real[i], color='b', linestyle='--', label=label)
+
+    ax.legend(fontsize=10, ncol=1, loc='upper right')
+    ax.grid(axis='y', linestyle='--', color='#acacac', alpha=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    ymax_ = abs(min(y) * 5)
+    y_margin = abs(ymax_ - min(y)) * 0.05
+    ymin = min(y) - y_margin
+    ymax = ymax_ + y_margin
+    ax.set_ylim(ymin, ymax)
+
+    ax.set_xlabel('Compressibility: Z', fontsize=13)
+    ax.set_ylabel('Objective function: f(Z)', fontsize=13)
+    ax.text(0.99, 0.1, 'aegis4048.github.io', fontsize=12, ha='right', va='center',
+            transform=ax.transAxes, color='grey', alpha=0.5)
+
+    T_F = round(UREG('%.15f kelvin' % T).to('degF')._magnitude, 1)
+    P_psia = round(UREG('%.15f pascal' % P).to('psi')._magnitude, 1)
+
+    bold_txt = setbold('Roots of the Cubic Equation')
+    plain_txt = r', %s @%sF, %spsia' % (eos_name, T_F, P_psia)
+    fig.suptitle(bold_txt + plain_txt, verticalalignment='top', x=0.01, horizontalalignment='left', fontsize=13,
+                 y=0.96)
+    yloc = 0.895
+    ax.annotate('', xy=(0.01, yloc + 0.01), xycoords='figure fraction', xytext=(1.02, yloc + 0.01),
+                arrowprops=dict(arrowstyle="-", color='k', lw=0.7))
+
+    fig.tight_layout()
+    return fig, ax
+
+
 class PR(object):
 
     def __init__(self, T, P, Tc, Pc, omega, mw=None, _update_now=True):
@@ -24,161 +198,171 @@ class PR(object):
 
         self.mw = mw
         self.R = config.constants['R']  # 8.31446261815324 ((m^3-Pa)/(mol-K))
-        self.Tr = self.T / self.Tc
 
-        self.a = None
-        self.b = None
-        self.kappa = None
-        self.alpha = None
-        self.a_alpha = None
-        self.A = None
-        self.B = None
-        self.roots = None
-        self.roots_real = None
-        self.Z_liq = None  # lowest real root is liquid
-        self.Z_gas = None
-        self.V_liq = None  # m^3/mol
-        self.V_gas = None
-        self.rho_liq = None
-        self.rho_gas = None
+        self.Tr = calculatorPR.calc_Tr(self.T, self.Tc)
+        self.a = calculatorPR.calc_a(self.Tc, self.Pc)
+        self.b = calculatorPR.calc_b(self.Tc, self.Pc)
+        self.kappa = calculatorPR.calc_kappa(self.omega)
+        self.alpha = calculatorPR.calc_alpha(self.kappa, self.Tr)
+        self.a_alpha = calculatorPR.calc_a_alpha(self.a, self.alpha)
+        self.A = calculatorPR.calc_A(self.a_alpha, self.T, self.P)
+        self.B = calculatorPR.calc_B(self.b, self.T, self.P)
+        self.roots = calculatorPR.solve_cubic(self.A, self.B)
 
-        # this line is implemented to avoid duplicate calculations when PR class is inherited with __super__ in
-        # other classes
-        if _update_now:
-            self.initialize_properties()
-
-    def calc_a(self):
-        return 0.45724 * (self.R ** 2) * (self.Tc ** 2) / self.Pc
-
-    def calc_b(self):
-        return 0.07780 * self.R * self.Tc / self.Pc
-
-    def calc_kappa(self):
-        return 0.37464 + 1.54226 * self.omega - 0.26992 * self.omega ** 2
-
-    def calc_alpha(self):
-        return (1 + self.kappa * (1 - np.sqrt(self.Tr))) ** 2
-
-    def calc_a_alpha(self):
-        return self.a * self.alpha
-
-    def calc_A(self):
-        return self.a_alpha * self.P / (self.R ** 2 * self.T ** 2)
-
-    def calc_B(self):
-        return self.b * self.P / (self.R * self.T)
-
-    def calc_V_liq(self):
-        return self.Z_liq * self.R * self.T / self.P  # m^3/mol
-
-    def calc_V_gas(self):
-        return self.Z_gas * self.R * self.T / self.P  # m^3/mol
-
-    def calc_rho_liq(self):
-        return self.P / (self.R * self.T * self.Z_liq) * self.mw  # g/m^3
-
-    def calc_rho_gas(self):
-        return self.P / (self.R * self.T * self.Z_gas) * self.mw  # g/m^3
-
-    def solve_cubic(self):
-        # Coefficients of the cubic equation
-        coeffs = [1, -(1 - self.B), self.A - 3 * self.B ** 2 - 2 * self.B,
-                  -(self.A * self.B - self.B ** 2 - self.B ** 3)]
-        return np.roots(coeffs)
-
-    def Z_obj_func(self, Z):
-        return Z**3 - (1 - self.B) * Z**2 + (self.A - 2*self.B - 3*self.B**2) * Z - (
-                self.A * self.B - self.B**2 - self.B**3)
-
-    def initialize_properties(self):
-        self.a = self.calc_a()
-        self.b = self.calc_b()
-        self.kappa = self.calc_kappa()
-        print('kappa orig:', self.kappa)
-        self.alpha = self.calc_alpha()
-        self.a_alpha = self.calc_a_alpha()
-        self.A = self.calc_A()
-        self.B = self.calc_B()
-        self.roots = self.solve_cubic()
         self.roots_real = self.roots.real
         self.Z_liq = min(self.roots_real)  # lowest real root is liquid
         self.Z_gas = max(self.roots_real)
-        self.V_liq = self.calc_V_liq()  # m^3/mol
+        self.V_liq = calculatorPR.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
+        self.V_gas = calculatorPR.calc_V_gas(self.Z_gas, self.T, self.P)
 
         if self.mw is not None:
-            self.rho_liq = self.calc_rho_liq()
-            self.rho_gas = self.calc_rho_gas()
+            self.rho_liq = calculatorPR.calc_rho_liq(self.mw, self.V_liq)
+            self.rho_gas = calculatorPR.calc_rho_gas(self.mw, self.V_gas)
 
     def plot(self):
-
         x = np.linspace(0, 1.05)
-        y = self.Z_obj_func(x)
-
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-
-        ax.plot(x, y, label='f(Z)', color='k')
-        ax.axhline(0, color='r', label='y=0')
-        for i in range(len(self.roots)):
-            real_part = self.roots[i].real
-            imag_part = self.roots[i].imag
-
-            if np.abs(imag_part) < 1e-5:
-                label = 'root = %.3f' % real_part
-            else:
-                sign = '+' if imag_part > 0 else '-'
-                label = f"root(i) = {real_part:.3f}{sign}j{np.abs(imag_part):.3f}"
-
-            ax.axvline(self.roots_real[i], color='b', linestyle='--', label=label)
-
-        ax.legend(fontsize=10, ncol=1, loc='upper right')
-        ax.grid(axis='y', linestyle='--', color='#acacac', alpha=0.5)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-        ymax_ = abs(min(y) * 5)
-        y_margin = abs(ymax_ - min(y)) * 0.05
-        ymin = min(y) - y_margin
-        ymax = ymax_ + y_margin
-        ax.set_ylim(ymin, ymax)
-
-        ax.set_xlabel('Compressibility: Z', fontsize=13)
-        ax.set_ylabel('Objective function: f(Z)', fontsize=13)
-        ax.text(0.99, 0.1, 'aegis4048.github.io', fontsize=12, ha='right', va='center',
-                transform=ax.transAxes, color='grey', alpha=0.5)
-
-        def setbold(txt):
-            return ' '.join([r"$\bf{" + item + "}$" for item in txt.split(' ')])
-
-        # Todo: Think about how to implement unit management
-        T_F = round(UREG('%.15f kelvin' % self.T).to('degF')._magnitude, 1)
-        P_psia = round(UREG('%.15f pascal' % self.P).to('psi')._magnitude, 1)
-
-        bold_txt = setbold('Roots of the Cubic Equation')
-        plain_txt = r', %s @%sF, %spsia' % (self.eos_name, T_F, P_psia)
-        fig.suptitle(bold_txt + plain_txt, verticalalignment='top', x=0.01, horizontalalignment='left', fontsize=13,
-                     y=0.96)
-        yloc = 0.895
-        ax.annotate('', xy=(0.01, yloc + 0.01), xycoords='figure fraction', xytext=(1.02, yloc + 0.01),
-                    arrowprops=dict(arrowstyle="-", color='k', lw=0.7))
-
-        fig.tight_layout()
+        y = calculatorPR.Z_obj_func(x, self.A, self.B)
+        fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
         return fig, ax
 
 
-class PR78(PR):
+class PR78:
     def __init__(self, T, P, Tc, Pc, omega, mw=None):
-        super().__init__(T, P, Tc, Pc, omega, mw, _update_now=False)
 
         self.eos_name = 'Peng-Robinson EOS 1978'
-        self.kappa = self.calc_kappa()
-        self.initialize_properties()
 
-    def calc_kappa(self):
-        if self.omega <= 0.491:
-            return 0.37464 + 1.54226 * self.omega - 0.26992 * self.omega ** 2
-        else:
-            return 0.379642 + 1.48503 * self.omega - 0.164423 * self.omega ** 2 + 0.016666 * self.omega ** 3
+        self.T = T  # K
+        self.P = P  # pascal
+        self.Tc = Tc
+        self.Pc = Pc
+        self.omega = omega
 
+        self.mw = mw
+        self.R = config.constants['R']  # 8.31446261815324 ((m^3-Pa)/(mol-K))
+
+        self.Tr = calculatorPR.calc_Tr(self.T, self.Tc)
+        self.a = calculatorPR.calc_a(self.Tc, self.Pc)
+        self.b = calculatorPR.calc_b(self.Tc, self.Pc)
+        self.kappa = calculatorPR78.calc_kappa(self.omega)
+        self.alpha = calculatorPR.calc_alpha(self.kappa, self.Tr)
+        self.a_alpha = calculatorPR.calc_a_alpha(self.a, self.alpha)
+        self.A = calculatorPR.calc_A(self.a_alpha, self.T, self.P)
+        self.B = calculatorPR.calc_B(self.b, self.T, self.P)
+        self.roots = calculatorPR.solve_cubic(self.A, self.B)
+
+        self.roots_real = self.roots.real
+        self.Z_liq = min(self.roots_real)  # lowest real root is liquid
+        self.Z_gas = max(self.roots_real)
+        self.V_liq = calculatorPR.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
+        self.V_gas = calculatorPR.calc_V_gas(self.Z_gas, self.T, self.P)
+
+        if self.mw is not None:
+            self.rho_liq = calculatorPR.calc_rho_liq(self.mw, self.V_liq)
+            self.rho_gas = calculatorPR.calc_rho_gas(self.mw, self.V_gas)
+
+    def plot(self):
+        x = np.linspace(0, 1.05)
+        y = calculatorPR.Z_obj_func(x, self.A, self.B)
+        fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
+        return fig, ax
+
+
+class PRMIX:
+
+    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, kijs=None, _update_now=True):
+
+        self.eos_name = 'Peng-Robinson Mixture EOS 1976'
+        self.n = len(Tcs)  # number of components
+
+        # Todo: make an Javascript Kijs matrix constructor
+        self.kijs = kijs
+
+        self.T = T  # K
+        self.P = P
+        self.Tcs = np.array(Tcs)
+        self.Pcs = np.array(Pcs)
+        self.omegas = np.array(omegas)
+        self.zs = utilities.normalize_composition_list(zs)[0]
+
+        self.mws = mws
+        self.R = config.constants['R']  # 8.31446261815324 ((m^3-Pa)/(mol-K))
+
+        self.Trs = calculatorPRMIX.calc_Tr(self.T, self.Tcs)
+        self.ais = calculatorPRMIX.calc_a(self.Tcs, self.Pcs)
+        self.b = calculatorPRMIX.calc_b(self.zs, self.Tcs, self.Pcs)
+        self.kappas = calculatorPRMIX.calc_kappas(self.omegas)
+        self.alphas = calculatorPRMIX.calc_alpha(self.kappas, self.Trs)
+        self.ais_alphas = calculatorPR.calc_a_alpha(self.ais, self.alphas)
+        self.a_alpha = calculatorPRMIX.calc_a_alpha(self.zs, self.ais_alphas)
+        self.A = calculatorPRMIX.calc_A(self.a_alpha, self.T, self.P)
+        self.B = calculatorPRMIX.calc_B(self.b, self.T, self.P)
+
+        self.roots = calculatorPRMIX.solve_cubic(self.A, self.B)
+        self.roots_real = self.roots.real
+        self.Z_liq = min(self.roots_real)
+        self.Z_gas = max(self.roots_real)
+        self.V_liq = calculatorPRMIX.calc_V_liq(self.Z_liq, self.T, self.P)
+        self.V_gas = calculatorPRMIX.calc_V_gas(self.Z_gas, self.T, self.P)
+
+        if self.mws is not None:
+            self.mw = np.sum(np.array(self.mws) * np.array(self.zs))
+            self.rho_liq = calculatorPRMIX.calc_rho_liq(self.mw, self.V_liq)
+            self.rho_gas = calculatorPRMIX.calc_rho_gas(self.mw, self.V_gas)
+
+    def plot(self):
+        x = np.linspace(0, 1.05)
+        y = calculatorPRMIX.Z_obj_func(x, self.A, self.B)
+        fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
+        return fig, ax
+
+
+class PRMIX78:
+    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, kijs=None):
+
+        self.eos_name = 'Peng-Robinson Mixture EOS 1978'
+        self.n = len(Tcs)  # number of components
+
+        # Todo: make an Javascript Kijs matrix constructor
+        self.kijs = kijs
+
+        self.T = T  # K
+        self.P = P
+        self.Tcs = np.array(Tcs)
+        self.Pcs = np.array(Pcs)
+        self.omegas = np.array(omegas)
+        self.zs = utilities.normalize_composition_list(zs)[0]
+
+        self.mws = mws
+        self.R = config.constants['R']  # 8.31446261815324 ((m^3-Pa)/(mol-K))
+
+        self.Trs = calculatorPRMIX78.calc_Tr(self.T, self.Tcs)
+        self.ais = calculatorPRMIX78.calc_a(self.Tcs, self.Pcs)
+        self.bis = calculatorPRMIX78.calc_b(self.zs, self.Tcs, self.Pcs)
+        self.b = calculatorPRMIX78.calc_b(self.zs, self.Tcs, self.Pcs)
+        self.kappas = calculatorPRMIX78.calc_kappa(self.omegas)
+        self.alphas = calculatorPRMIX78.calc_alpha(self.kappas, self.Trs)
+        self.ais_alphas = calculatorPR78.calc_a_alpha(self.ais, self.alphas)
+        self.a_alpha = calculatorPRMIX78.calc_a_alpha(self.zs, self.ais_alphas)
+        self.A = calculatorPRMIX78.calc_A(self.a_alpha, self.T, self.P)
+        self.B = calculatorPRMIX78.calc_B(self.b, self.T, self.P)
+
+        self.roots = calculatorPRMIX78.solve_cubic(self.A, self.B)
+        self.roots_real = self.roots.real
+        self.Z_liq = min(self.roots_real)
+        self.Z_gas = max(self.roots_real)
+        self.V_liq = calculatorPRMIX78.calc_V_liq(self.Z_liq, self.T, self.P)
+        self.V_gas = calculatorPRMIX78.calc_V_gas(self.Z_gas, self.T, self.P)
+
+        if self.mws is not None:
+            self.mw = np.sum(np.array(self.mws) * np.array(self.zs))
+            self.rho_liq = calculatorPRMIX78.calc_rho_liq(self.mw, self.V_liq)
+            self.rho_gas = calculatorPRMIX78.calc_rho_gas(self.mw, self.V_gas)
+
+    def plot(self):
+        x = np.linspace(0, 1.05)
+        y = calculatorPRMIX78.Z_obj_func(x, self.A, self.B)
+        fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
+        return fig, ax
 
 
 

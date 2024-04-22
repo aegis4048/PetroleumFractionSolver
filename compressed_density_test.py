@@ -15,7 +15,7 @@ import sys
 UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
 
 def calc_Vs_sg(comp_dict, T):
-    comp_dict, _ = utilities.normalize_composition(comp_dict)
+    comp_dict = utilities.normalize_composition_dict(comp_dict)
     names = list(comp_dict.keys())
     constants = ChemicalConstantsPackage.constants_from_IDs(names)
     MW_mix = np.sum(np.array(constants.MWs) * np.array(list(comp_dict.values())))
@@ -29,7 +29,7 @@ def calc_Vs_sg(comp_dict, T):
 
 
 def calc_Vs_sg_compressed(comp_dict, T, P):
-    comp_dict, _ = utilities.normalize_composition(comp_dict)
+    comp_dict = utilities.normalize_composition_dict(comp_dict)
     names = list(comp_dict.keys())
     zs = list(comp_dict.values())
     constants = ChemicalConstantsPackage.constants_from_IDs(names)

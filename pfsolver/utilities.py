@@ -1,5 +1,6 @@
 from . import config
 import warnings
+import numpy as np
 
 
 CONSTANTS = config.constants
@@ -35,25 +36,35 @@ def handle_rounding_error(value, key):
     return round(value, n)
 
 
-def normalize_composition(comp_dict):
+def normalize_composition_dict(comp_dict):
     """
     :param comp_dict: un-normalized dictionary of composition. {"CH4": 3, "C2H6", 6}
     :return: normalized dictionary of composition. {"CH4": 0.3333, "C2H6", 0.66666666}
     """
     total_comp = sum(comp_dict.values())
-    total_comp = round(total_comp, 9)
-    if total_comp > 0:
-        keys = list(comp_dict.keys())
-        last_key = keys[-1]
-        normalized_values = [v / total_comp for v in comp_dict.values()]
+    total_comp = round(total_comp, 9)  # warning is triggered if total comp is not 1 or 100
 
-        # Normalize all but the last element
-        comp_dict = {keys[i]: normalized_values[i] for i in range(len(keys) - 1)}
+    keys = list(comp_dict.keys())
+    last_key = keys[-1]
+    normalized_values = np.array([v / total_comp for v in comp_dict.values()])
 
-        # Adjust the last element so that the sum is exactly 1
-        comp_dict[last_key] = 1 - sum(comp_dict.values())
-
+    # Adjust the last element so that the sum is exactly 1
+    comp_dict = {keys[i]: normalized_values[i] for i in range(len(keys) - 1)}
+    comp_dict[last_key] = 1 - sum(comp_dict.values())
     return comp_dict, total_comp
+
+
+def normalize_composition_list(zs):
+    """
+    :param zs: un-normalized list of composition. [3, 6]
+    :return: normalized list of composition. [0.3333, 0.66666666]
+    """
+    total_comp = sum(zs)
+    total_comp = round(total_comp, 9)  # warning is triggered if total comp is not 1 or 100
+    normalized_values = np.array([v / total_comp for v in zs])
+    normalized_values[-1] = 1 - normalized_values[:-1].sum()
+
+    return np.array(normalized_values), total_comp
 
 
 def ideal_gas_molar_volume():

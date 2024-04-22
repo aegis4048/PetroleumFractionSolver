@@ -309,7 +309,7 @@ class PropertyTable(object):
         }
         utilities.validate_kwargs(self.kwargs_options, self)
 
-        self.comp_dict, self.unnormalized_sum = utilities.normalize_composition(comp_dict)
+        self.comp_dict, self.unnormalized_sum = utilities.normalize_composition_dict(comp_dict)
         if not (math.isclose(self.unnormalized_sum, 1, abs_tol=1e-9) or math.isclose(self.unnormalized_sum, 100, abs_tol=1e-9)):
             if self.class_warning:
                 comp_dict_items = ",\n".join(f"    '{key}': {value * 100}" for key, value in self.comp_dict.items())

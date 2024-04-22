@@ -89,7 +89,7 @@ P = UREG('%.15f psi' % P_psi).to('pascal')._magnitude
 comp = {'n-butane': 5, 'n-decane': 50}
 comp = {'nitrogen': 50, 'methane': 50}
 comp = {'ethane': 50}
-comp_dict, _ = utilities.normalize_composition(comp)
+comp_dict, _ = utilities.normalize_composition_dict(comp)
 names = list(comp_dict.keys())
 zs = list(comp_dict.values())
 constants = ChemicalConstantsPackage.constants_from_IDs(['ethane'])
@@ -101,7 +101,7 @@ eos = thermo.eos_mix.PR78MIX(constants.Tcs, constants.Pcs, constants.omegas, zs=
 from thermo import *
 
 comp = {'butane': 50, 'n-decane': 50}
-comp_dict, _ = utilities.normalize_composition(comp)
+comp_dict, _ = utilities.normalize_composition_dict(comp)
 names = list(comp_dict.keys())
 zs = list(comp_dict.values())
 
