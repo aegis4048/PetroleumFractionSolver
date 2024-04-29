@@ -16,7 +16,7 @@ from pfsolver import correlations
 from pfsolver import utilities
 
 
-UREG = pint.UnitRegistry()
+UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
 
 
 # shamrock

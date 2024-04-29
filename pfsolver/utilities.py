@@ -89,3 +89,7 @@ def check_ranges(target_dict, ref_dict, class_name=None, warning_obj=None):
             #issue_unique_warning(msg, warning_obj)
             warnings.warn(msg, warning_obj)
 
+
+def setbold(txt):
+    return ' '.join([r"$\bf{" + item + "}$" for item in txt.split(' ')])
+

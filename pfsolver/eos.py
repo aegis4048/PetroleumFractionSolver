@@ -2,6 +2,7 @@ import numpy as np
 import pint
 from thermo import ChemicalConstantsPackage
 from matplotlib import pyplot as plt
+import time
 
 from pfsolver import utilities
 from pfsolver import config
@@ -55,7 +56,30 @@ class calculatorPR:
     def solve_cubic(A, B):
         # Coefficients of the cubic equation
         coeffs = [1, -(1 - B), A - 3 * B ** 2 - 2 * B, -(A * B - B ** 2 - B ** 3)]
-        return np.roots(coeffs)
+        return np.array(sorted(np.roots(coeffs)))
+
+    @staticmethod
+    def solve_cubic_analytical(A, B):
+        a = -(1 - B)
+        b = A - 3 * B ** 2 - 2 * B
+        c = -(A * B - B ** 2 - B ** 3)
+
+        Q = (a ** 2 - 3 * b) / 9
+        K = (2 * a ** 3 - 9 * a * b + 27 * c) / 54
+
+        if K ** 2 < Q ** 3:
+            theta = np.arccos(K / np.sqrt(Q ** 3))
+            x1 = -2 * np.sqrt(Q) * np.cos(theta / 3) - a / 3
+            x2 = -2 * np.sqrt(Q) * np.cos((theta + 2 * np.pi) / 3) - a / 3
+            x3 = -2 * np.sqrt(Q) * np.cos((theta - 2 * np.pi) / 3) - a / 3
+        else:
+            S = np.cbrt(-K + np.sqrt(K ** 2 - Q ** 3))
+            T = np.cbrt(-K - np.sqrt(K ** 2 - Q ** 3))
+            x1 = S + T - a / 3
+            x2 = -(S + T) / 2 - a / 3 + 1j * np.sqrt(3) * (S - T) / 2
+            x3 = -(S + T) / 2 - a / 3 - 1j * np.sqrt(3) * (S - T) / 2
+
+        return np.array(sorted([x1, x2, x3]))
 
     @staticmethod
     def Z_obj_func(Z, A, B):
@@ -132,10 +156,6 @@ class calculatorPRMIX78(calculatorPRMIX):
         return kappas
 
 
-def setbold(txt):
-    return ' '.join([r"$\bf{" + item + "}$" for item in txt.split(' ')])
-
-
 def plot_Z(x, y, roots, roots_real, T, P, eos_name):
     fig, ax = plt.subplots(figsize=(8, 4.5))
 
@@ -172,7 +192,7 @@ def plot_Z(x, y, roots, roots_real, T, P, eos_name):
     T_F = round(UREG('%.15f kelvin' % T).to('degF')._magnitude, 1)
     P_psia = round(UREG('%.15f pascal' % P).to('psi')._magnitude, 1)
 
-    bold_txt = setbold('Roots of the Cubic Equation')
+    bold_txt = utilities.setbold('Roots of the Cubic Equation')
     plain_txt = r', %s @%sF, %spsia' % (eos_name, T_F, P_psia)
     fig.suptitle(bold_txt + plain_txt, verticalalignment='top', x=0.01, horizontalalignment='left', fontsize=13,
                  y=0.96)
@@ -186,7 +206,7 @@ def plot_Z(x, y, roots, roots_real, T, P, eos_name):
 
 class PR(object):
 
-    def __init__(self, T, P, Tc, Pc, omega, mw=None, _update_now=True):
+    def __init__(self, T, P, Tc, Pc, omega, mw=None, analytical=True, _update_now=True):
 
         self.eos_name = 'Peng-Robinson EOS 1976'
 
@@ -207,7 +227,11 @@ class PR(object):
         self.a_alpha = calculatorPR.calc_a_alpha(self.a, self.alpha)
         self.A = calculatorPR.calc_A(self.a_alpha, self.T, self.P)
         self.B = calculatorPR.calc_B(self.b, self.T, self.P)
-        self.roots = calculatorPR.solve_cubic(self.A, self.B)
+
+        if analytical:
+            self.roots = calculatorPR.solve_cubic_analytical(self.A, self.B)
+        else:
+            self.roots = calculatorPR.solve_cubic(self.A, self.B)
 
         self.roots_real = self.roots.real
         self.Z_liq = min(self.roots_real)  # lowest real root is liquid
@@ -227,7 +251,7 @@ class PR(object):
 
 
 class PR78:
-    def __init__(self, T, P, Tc, Pc, omega, mw=None):
+    def __init__(self, T, P, Tc, Pc, omega, mw=None, analytical=True):
 
         self.eos_name = 'Peng-Robinson EOS 1978'
 
@@ -240,25 +264,29 @@ class PR78:
         self.mw = mw
         self.R = config.constants['R']  # 8.31446261815324 ((m^3-Pa)/(mol-K))
 
-        self.Tr = calculatorPR.calc_Tr(self.T, self.Tc)
-        self.a = calculatorPR.calc_a(self.Tc, self.Pc)
-        self.b = calculatorPR.calc_b(self.Tc, self.Pc)
+        self.Tr = calculatorPR78.calc_Tr(self.T, self.Tc)
+        self.a = calculatorPR78.calc_a(self.Tc, self.Pc)
+        self.b = calculatorPR78.calc_b(self.Tc, self.Pc)
         self.kappa = calculatorPR78.calc_kappa(self.omega)
-        self.alpha = calculatorPR.calc_alpha(self.kappa, self.Tr)
-        self.a_alpha = calculatorPR.calc_a_alpha(self.a, self.alpha)
-        self.A = calculatorPR.calc_A(self.a_alpha, self.T, self.P)
-        self.B = calculatorPR.calc_B(self.b, self.T, self.P)
-        self.roots = calculatorPR.solve_cubic(self.A, self.B)
+        self.alpha = calculatorPR78.calc_alpha(self.kappa, self.Tr)
+        self.a_alpha = calculatorPR78.calc_a_alpha(self.a, self.alpha)
+        self.A = calculatorPR78.calc_A(self.a_alpha, self.T, self.P)
+        self.B = calculatorPR78.calc_B(self.b, self.T, self.P)
+
+        if analytical:
+            self.roots = calculatorPR78.solve_cubic_analytical(self.A, self.B)
+        else:
+            self.roots = calculatorPR78.solve_cubic(self.A, self.B)
 
         self.roots_real = self.roots.real
         self.Z_liq = min(self.roots_real)  # lowest real root is liquid
         self.Z_gas = max(self.roots_real)
-        self.V_liq = calculatorPR.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
-        self.V_gas = calculatorPR.calc_V_gas(self.Z_gas, self.T, self.P)
+        self.V_liq = calculatorPR78.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
+        self.V_gas = calculatorPR78.calc_V_gas(self.Z_gas, self.T, self.P)
 
         if self.mw is not None:
-            self.rho_liq = calculatorPR.calc_rho_liq(self.mw, self.V_liq)
-            self.rho_gas = calculatorPR.calc_rho_gas(self.mw, self.V_gas)
+            self.rho_liq = calculatorPR78.calc_rho_liq(self.mw, self.V_liq)
+            self.rho_gas = calculatorPR78.calc_rho_gas(self.mw, self.V_gas)
 
     def plot(self):
         x = np.linspace(0, 1.05)
@@ -269,12 +297,12 @@ class PR78:
 
 class PRMIX:
 
-    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, kijs=None, _update_now=True):
+    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, analytical=True, kijs=None, _update_now=True):
 
         self.eos_name = 'Peng-Robinson Mixture EOS 1976'
         self.n = len(Tcs)  # number of components
 
-        # Todo: make an Javascript Kijs matrix constructor
+        # Todo: make an Javascript Kijs matrix constructor on a documentation page
         self.kijs = kijs
 
         self.T = T  # K
@@ -297,7 +325,11 @@ class PRMIX:
         self.A = calculatorPRMIX.calc_A(self.a_alpha, self.T, self.P)
         self.B = calculatorPRMIX.calc_B(self.b, self.T, self.P)
 
-        self.roots = calculatorPRMIX.solve_cubic(self.A, self.B)
+        if analytical:
+            self.roots = calculatorPRMIX.solve_cubic_analytical(self.A, self.B)
+        else:
+            self.roots = calculatorPRMIX.solve_cubic(self.A, self.B)
+
         self.roots_real = self.roots.real
         self.Z_liq = min(self.roots_real)
         self.Z_gas = max(self.roots_real)
@@ -317,7 +349,7 @@ class PRMIX:
 
 
 class PRMIX78:
-    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, kijs=None):
+    def __init__(self, T, P, Tcs, Pcs, omegas, zs, mws=None, analytical=True, kijs=None):
 
         self.eos_name = 'Peng-Robinson Mixture EOS 1978'
         self.n = len(Tcs)  # number of components
@@ -339,14 +371,18 @@ class PRMIX78:
         self.ais = calculatorPRMIX78.calc_a(self.Tcs, self.Pcs)
         self.bis = calculatorPRMIX78.calc_b(self.zs, self.Tcs, self.Pcs)
         self.b = calculatorPRMIX78.calc_b(self.zs, self.Tcs, self.Pcs)
-        self.kappas = calculatorPRMIX78.calc_kappa(self.omegas)
+        self.kappas = calculatorPRMIX78.calc_kappas(self.omegas)
         self.alphas = calculatorPRMIX78.calc_alpha(self.kappas, self.Trs)
         self.ais_alphas = calculatorPR78.calc_a_alpha(self.ais, self.alphas)
         self.a_alpha = calculatorPRMIX78.calc_a_alpha(self.zs, self.ais_alphas)
         self.A = calculatorPRMIX78.calc_A(self.a_alpha, self.T, self.P)
         self.B = calculatorPRMIX78.calc_B(self.b, self.T, self.P)
 
-        self.roots = calculatorPRMIX78.solve_cubic(self.A, self.B)
+        if analytical:
+            self.roots = calculatorPRMIX78.solve_cubic_analytical(self.A, self.B)
+        else:
+            self.roots = calculatorPRMIX78.solve_cubic(self.A, self.B)
+
         self.roots_real = self.roots.real
         self.Z_liq = min(self.roots_real)
         self.Z_gas = max(self.roots_real)
@@ -363,6 +399,9 @@ class PRMIX78:
         y = calculatorPRMIX78.Z_obj_func(x, self.A, self.B)
         fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
         return fig, ax
+
+
+
 
 
 
