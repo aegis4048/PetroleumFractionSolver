@@ -17,26 +17,10 @@ from pfsolver import correlations
 from pfsolver import utilities
 from pfsolver import eos
 
+from utilities_for_test import TestNumericalMethods
+
 
 UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
-
-
-class TestNumericalMethods(unittest.TestCase):
-    def assertAlmostEqualSigFig(self, actual, expected, sig_figs=7):
-        npt.assert_approx_equal(actual, expected, significant=sig_figs)
-
-    def assertNotAlmostEqualSigFig(self, actual, expected, sig_figs=7):
-        try:
-            npt.assert_approx_equal(actual, expected, significant=sig_figs)
-        except AssertionError:
-            pass  # If assertion fails, it means the values are not approximately equal, which is expected
-            pass  # If assertion fails, it means the values are not approximately equal, which is expected
-        else:
-            raise AssertionError(
-                f"Items are unexpectedly equal to {sig_figs} significant digits:\n"
-                f"LEFT: {actual}\n"
-                f"RIGHT: {expected}"
-            )
 
 
 class Test_PREOS(TestNumericalMethods):

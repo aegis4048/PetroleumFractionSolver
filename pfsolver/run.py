@@ -50,7 +50,7 @@ comp = {
 }
 ptable = PropertyTable(comp)
 
-def ideal_gas_molar_volume():
+def ideal_gas_molar_volume_STP():
  """
  PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
  R = 8.31446261815324 ((m^3-Pa)/(mol-K))

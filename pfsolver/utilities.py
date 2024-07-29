@@ -63,11 +63,10 @@ def normalize_composition_list(zs):
     total_comp = round(total_comp, 9)  # warning is triggered if total comp is not 1 or 100
     normalized_values = np.array([v / total_comp for v in zs])
     normalized_values[-1] = 1 - normalized_values[:-1].sum()
-
     return np.array(normalized_values), total_comp
 
 
-def ideal_gas_molar_volume():
+def ideal_gas_molar_volume_STP():
     """
     PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
     R = 8.31446261815324 ((m^3-Pa)/(mol-K))
@@ -76,6 +75,15 @@ def ideal_gas_molar_volume():
     :return: ideal gas molar volume in a standard condition (m^3/mol) = 0.023690421108823113
     """
     return CONSTANTS['R'] * CONSTANTS['T_STANDARD'] / CONSTANTS['P_STANDARD']
+
+
+def real_gas_molar_volume(Z, T, P):
+    """
+    PV=nZRT, where number of moles n=1. Rearranging -> V=ZRT/P
+    R = 8.31446261815324 ((m^3-Pa)/(mol-K))
+    :return: real gas molar volume at changing T and P (m^3/mol)
+    """
+    return Z * CONSTANTS['R'] * T / P
 
 
 def check_ranges(target_dict, ref_dict, class_name=None, warning_obj=None):

@@ -143,7 +143,7 @@ def mw_GHV_gas_xa(mw, GHV_gas, xa):
 
 
 @respect_warnings
-def ideal_gas_molar_volume():
+def ideal_gas_molar_volume_STP():
     """
     PV=nRT, where number of moles n=1. Rearranging -> V=RT/P
     R = 8.31446261815324 ((m^3-Pa)/(mol-K))
@@ -160,7 +160,7 @@ def ghv_liq_ghv_gas_mw(ghv_liq, ghv_gas, mw):
     source: None, this is a simple unit conversion
     unit: ghv_liq in Btu/lbm ghv_gas in Btu/scf, mw in lbm/lbmol
     """
-    V_molar = ideal_gas_molar_volume()  # fixed 0.0236 m^3/mol (379.48 ft^3/mol) at standard conditions for all compounds
+    V_molar = ideal_gas_molar_volume_STP()  # fixed 0.0236 m^3/mol (379.48 ft^3/mol) at standard conditions for all compounds
     V_molar = UREG('%.15f m^3/g' % V_molar).to('ft^3/lb').magnitude  # unit conversion
     return -ghv_liq + ghv_gas * V_molar / mw
 
@@ -322,7 +322,7 @@ def calc_PNA_comp(MW, VG, RI_intercept):
 
 @respect_warnings
 def calc_ghv_gas_from_Hc(Hc):
-    V_molar = utilities.ideal_gas_molar_volume()
+    V_molar = utilities.ideal_gas_molar_volume_STP()
     ghv_ideal_gas = Hc / V_molar
     return UREG('%.15f joule/m^3' % ghv_ideal_gas).to('Btu/ft^3')._magnitude * -1
 

@@ -339,7 +339,7 @@ class PropertyTable(object):
         # temporarily disabling this code, may active it later
         #self._check_properties_exists()
 
-        self.V_molar = utilities.ideal_gas_molar_volume()
+        self.V_molar = utilities.ideal_gas_molar_volume_STP()
 
         self.ghvs_gas_pure, self.ghvs_liq_pure, self.sgs_liq_pure, self.sgs_gas_pure, self.mws_pure, self.Tbs_pure, self.Tcs_pure, self.Pcs_pure, self.omegas_pure = self._get_properties_pure_compounds()
         self.ghvs_gas_fraction, self.ghvs_liq_fraction, self.sgs_fraction, self.sgs_gas_fraction, self.mws_fraction, self.scns_fraction, self.Tbs_fraction, self.Tcs_fraction, self.Pcs_fraction, self.omegas_fraction = [], [] ,[], [], [], [], [], [], [], []

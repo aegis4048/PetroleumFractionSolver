@@ -87,12 +87,26 @@ class calculatorPR:
                 A * B - B ** 2 - B ** 3)
 
     @staticmethod
-    def calc_rho_liq(mw, V_liq):
-        return mw / V_liq  # g/m^3  # g/m^3
+    def calc_rho(mw, V_liq):
+        return mw / V_liq  # g/m^3  
 
+    
     @staticmethod
-    def calc_rho_gas(mw, V_gas):
-        return mw / V_gas  # g/m^3
+    def identify_phase(roots_real, V_liq, V_gas, T, P, tol=0.2):
+        if len(roots_real) == 3:
+            phase = 'two phase'
+        elif len(roots_real) == 1:
+            assert V_liq == V_gas
+            V_real_gas = utilities.real_gas_molar_volume(roots_real[0], T, P)
+            
+            # if V_liq is within 20% proximity of V_real_gas, then it is a gas phase
+            if abs(V_liq - V_real_gas) / V_real_gas < tol:
+                phase = 'gas'
+            else:
+                phase = 'liquid'
+        else:
+            raise ValueError('Number of roots should be either 1 or 3. This is a bug')
+        return phase
 
 
 class calculatorPR78(calculatorPR):
@@ -233,15 +247,15 @@ class PR(object):
         else:
             self.roots = calculatorPR.solve_cubic(self.A, self.B)
 
-        self.roots_real = self.roots.real
+        self.roots_real = self.roots[self.roots.imag == 0].real
         self.Z_liq = min(self.roots_real)  # lowest real root is liquid
         self.Z_gas = max(self.roots_real)
         self.V_liq = calculatorPR.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
         self.V_gas = calculatorPR.calc_V_gas(self.Z_gas, self.T, self.P)
 
         if self.mw is not None:
-            self.rho_liq = calculatorPR.calc_rho_liq(self.mw, self.V_liq)
-            self.rho_gas = calculatorPR.calc_rho_gas(self.mw, self.V_gas)
+            self.rho_liq = calculatorPR.calc_rho(self.mw, self.V_liq)
+            self.rho_gas = calculatorPR.calc_rho(self.mw, self.V_gas)
 
     def plot(self):
         x = np.linspace(0, 1.05)
@@ -278,15 +292,25 @@ class PR78:
         else:
             self.roots = calculatorPR78.solve_cubic(self.A, self.B)
 
-        self.roots_real = self.roots.real
+        self.roots_real = self.roots[self.roots.imag == 0].real
         self.Z_liq = min(self.roots_real)  # lowest real root is liquid
         self.Z_gas = max(self.roots_real)
         self.V_liq = calculatorPR78.calc_V_liq(self.Z_liq, self.T, self.P)  # m^3/mol
         self.V_gas = calculatorPR78.calc_V_gas(self.Z_gas, self.T, self.P)
 
         if self.mw is not None:
-            self.rho_liq = calculatorPR78.calc_rho_liq(self.mw, self.V_liq)
-            self.rho_gas = calculatorPR78.calc_rho_gas(self.mw, self.V_gas)
+            self.rho_liq = calculatorPR78.calc_rho(self.mw, self.V_liq)
+            self.rho_gas = calculatorPR78.calc_rho(self.mw, self.V_gas)
+        
+        self.phase = calculatorPR78.identify_phase(self.roots_real, self.V_liq, self.V_gas, self.T, self.P)
+        if self.phase == 'gas':
+            self.V_liq = None
+            self.Z_liq = None
+            self.rho_liq = None
+        if self.phase == 'liquid':
+            self.V_gas = None
+            self.Z_gas = None
+            self.rho_gas = None
 
     def plot(self):
         x = np.linspace(0, 1.05)
@@ -330,7 +354,7 @@ class PRMIX:
         else:
             self.roots = calculatorPRMIX.solve_cubic(self.A, self.B)
 
-        self.roots_real = self.roots.real
+        self.roots_real = self.roots[self.roots.imag == 0].real
         self.Z_liq = min(self.roots_real)
         self.Z_gas = max(self.roots_real)
         self.V_liq = calculatorPRMIX.calc_V_liq(self.Z_liq, self.T, self.P)
@@ -338,8 +362,18 @@ class PRMIX:
 
         if self.mws is not None:
             self.mw = np.sum(np.array(self.mws) * np.array(self.zs))
-            self.rho_liq = calculatorPRMIX.calc_rho_liq(self.mw, self.V_liq)
-            self.rho_gas = calculatorPRMIX.calc_rho_gas(self.mw, self.V_gas)
+            self.rho_liq = calculatorPRMIX.calc_rho(self.mw, self.V_liq)
+            self.rho_gas = calculatorPRMIX.calc_rho(self.mw, self.V_gas)
+
+        self.phase = calculatorPRMIX.identify_phase(self.roots_real, self.V_liq, self.V_gas, self.T, self.P)
+        if self.phase == 'gas':
+            self.V_liq = None
+            self.Z_liq = None
+            self.rho_liq = None
+        if self.phase == 'liquid':
+            self.V_gas = None
+            self.Z_gas = None
+            self.rho_gas = None
 
     def plot(self):
         x = np.linspace(0, 1.05)
@@ -383,7 +417,7 @@ class PRMIX78:
         else:
             self.roots = calculatorPRMIX78.solve_cubic(self.A, self.B)
 
-        self.roots_real = self.roots.real
+        self.roots_real = self.roots[self.roots.imag == 0].real
         self.Z_liq = min(self.roots_real)
         self.Z_gas = max(self.roots_real)
         self.V_liq = calculatorPRMIX78.calc_V_liq(self.Z_liq, self.T, self.P)
@@ -391,16 +425,24 @@ class PRMIX78:
 
         if self.mws is not None:
             self.mw = np.sum(np.array(self.mws) * np.array(self.zs))
-            self.rho_liq = calculatorPRMIX78.calc_rho_liq(self.mw, self.V_liq)
-            self.rho_gas = calculatorPRMIX78.calc_rho_gas(self.mw, self.V_gas)
+            self.rho_liq = calculatorPRMIX78.calc_rho(self.mw, self.V_liq)
+            self.rho_gas = calculatorPRMIX78.calc_rho(self.mw, self.V_gas)
+            
+        self.phase = calculatorPRMIX78.identify_phase(self.roots_real, self.V_liq, self.V_gas, self.T, self.P)
+        if self.phase == 'gas':
+            self.V_liq = None
+            self.Z_liq = None
+            self.rho_liq = None
+        if self.phase == 'liquid':
+            self.V_gas = None
+            self.Z_gas = None
+            self.rho_gas = None
 
     def plot(self):
         x = np.linspace(0, 1.05)
         y = calculatorPRMIX78.Z_obj_func(x, self.A, self.B)
         fig, ax = plot_Z(x, y, self.roots, self.roots_real, self.T, self.P, self.eos_name)
         return fig, ax
-
-
 
 
 

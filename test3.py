@@ -12,6 +12,7 @@ import pint
 import pfsolver
 from pfsolver import config
 from pfsolver import utilities
+from pfsolver.eos import PR78, PRMIX78
 
 
 UREG = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
@@ -26,8 +27,8 @@ names = ['methane', 'ethane', 'propane', 'n-butane', 'n-pentane', 'n-hexane', 'h
 #names = ['propane', 'n-butane', 'n-decane']
 
 
-T_F = 60
-P_psi = 0
+T_F = 10
+P_psi = 200
 T = UREG('%.15f degF' % T_F).to('kelvin')._magnitude
 P = UREG('%.15f psi' % P_psi).to('pascal')._magnitude
 for i, name in enumerate(names[1:2]):
@@ -39,7 +40,7 @@ for i, name in enumerate(names[1:2]):
     constants = ChemicalConstantsPackage.constants_from_IDs([name])
     Psat = constants.Psat_298s[0]
     Vs = COSTALD_mixture([1], T, constants.Tcs, constants.Vcs, constants.omegas)
-    sg_STP = Vm_to_rho(Vs, constants.MWs[0])
+    rho_STP = Vm_to_rho(Vs, constants.MWs[0]) * 1000
 
     Tc = constants.Tcs[0]
     Pc = constants.Pcs[0]
@@ -57,32 +58,39 @@ for i, name in enumerate(names[1:2]):
     C = j + k*omega
 
     Tr = T/Tc
-    if Tr > 1.0:
-        print('Tr exceeds 1.0')
+    if Tr > 0.93:
+        print('Tr exceeds 0.93')
         #Tr = 0.999
 
+    # decane density 10F, 200psia = 756651 g/m3
 
     tau = 1.0 - Tr
     tau13 = tau**(1.0/3.0)
     B = Pc*(-1.0 + a*tau13 + b*tau13*tau13 + d*tau + e*tau*tau13)
 
     Vs_dense = Vs*(1.0 - C*np.log((B + P)/(B + Psat)))
-    sg_dense = Vm_to_rho(Vs_dense, float(constants.MWs[0]))
-    print('Tr          :', round(Tr, 2))
+    rho_dense = Vm_to_rho(Vs_dense, float(constants.MWs[0])) * 1000
+    print('Tr          :', round(Tr, 4))
     print('(B + P)     :', round(B + P))
     print('(B + Psat)  :', round(B + Psat))
     print('(B + P)/(B + Psat):', (B + P)/(B + Psat))
-    print('sg_dense    :', round(sg_dense, 1))
-    print('sg_STP      :', round(sg_STP, 1))
+    print('sg_dense    :', round(rho_dense, 1))
+    print('sg_STP      :', round(rho_STP, 1))
     print('-------------------------------------------------------------')
+
+    obj = PR78(T, P, Tc, Pc, omega, constants.MWs[0], analytical=False)
+    print('rho_liq       :', round(obj.rho_liq), 1)
+    print('rho_gas       :', round(obj.rho_gas), 1)
+
+
 
     # Todo: If the phase is in critical phase, the Tau is negative and returns imaginary number.
 
     #Vs_dense2 = COSTALD_compressed(T, P, Psat, constants.Tcs[0], constants.Pcs[0], constants.omegas[0], Vs)
 
 
-T_F = 60
-P_psi = 14.7
+T_F = 10
+P_psi = 500
 T = UREG('%.15f degF' % T_F).to('kelvin')._magnitude
 P = UREG('%.15f psi' % P_psi).to('pascal')._magnitude
 
@@ -126,5 +134,4 @@ res = flashN.flash(T=T, P=P, zs=zs)
 
 kijs = IPDB.get_ip_asymmetric_matrix('ChemSep PR', constants.CASs, 'kij')
 
-# Todo: implement the PR78MIX from scratch. Make a simple function. Evolve to class if needed later
-#
+

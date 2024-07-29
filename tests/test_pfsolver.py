@@ -935,7 +935,7 @@ class Test_SCNProperty(unittest.TestCase):
         components = list(sample_2.keys())
         for i, component in enumerate(components):
             constants = ChemicalConstantsPackage.constants_from_IDs([component])
-            v_molar = utilities.ideal_gas_molar_volume()
+            v_molar = utilities.ideal_gas_molar_volume_STP()
             Hc = constants.Hcs[0]
             ghv_gas = Hc / v_molar
             ghv_gas = UREG('%.15f joule/m^3' % ghv_gas).to('Btu/ft^3')._magnitude * -1
